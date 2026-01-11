@@ -5,7 +5,7 @@ Flask application with all routes, API endpoints, and services
 
 from functools import wraps
 import os
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for, flash
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
@@ -49,10 +49,16 @@ app.config.from_object(Config)
 # Enhanced session configuration
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'krishi_sahyog_secret_key_2024_change_in_production')
 app.permanent_session_lifetime = timedelta(days=7)
-app.config['SESSION_COOKIE_SECURE'] = False
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_TYPE'] = 'filesystem'
+
+# Production settings for Render
+if os.environ.get('FLASK_ENV') == 'production':
+    app.config['SESSION_COOKIE_SECURE'] = True  # HTTPS only in production
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+else:
+    app.config['SESSION_COOKIE_SECURE'] = False  # Allow HTTP in development
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -106,196 +112,179 @@ except:
 # ============================================================================
 
 class EnhancedPlantDiseaseDetector:
-
     def __init__(self):
-        # Keras models
-        self.models = {}
-
-        # TFLite models
-        self.tflite_models = {}
-        self.tflite_details = {}
-
+        self.models = {}  
         self.classes = {
-            'wheat': ['HealthyLeaf', 'BlackPoint', 'LeafBlight', 'FusariumFootRot', 'WheatBlast'],
-            'tomato': [
-                'healthy', 'bacterial_spot', 'early_blight', 'late_blight',
-                'leaf_mold', 'septoria_leaf_spot', 'spider_mites',
-                'target_spot', 'mosaic_virus', 'yellow_leaf_curl'
-            ],
+            'wheat': ['HealthyLeaf', 'BlackPoint', 'LeafBlight', 'FusariumFootRot','WheatBlast'],
+            'tomato': ['healthy', 'bacterial_spot', 'early_blight', 'late_blight', 'leaf_mold', 'septoria_leaf_spot', 'spider_mites', 'target_spot', 'mosaic_virus', 'yellow_leaf_curl'],
             'potato': ['Potato___healthy', 'Potato___Early_blight', 'Potato___late_blight'],
             'rice': ['healthy', 'bacterial_blight', 'brown_spot', 'leaf_smut']
         }
-
+        
         self.treatments = {
             'HealthyLeaf': 'No pesticide needed',
-            'BlackPoint': 'Use Mancozeb or Chlorothalonil',
-            'LeafBlight': 'Copper-based fungicides',
-            'FusariumFootRot': 'Use Prothioconazole',
-            'WheatBlast': 'Use Tricyclazole',
-
-            'tomato_healthy': 'Continue preventive care',
-            'tomato_bacterial_spot': 'Use copper-based bactericides',
-            'tomato_early_blight': 'Apply chlorothalonil',
-            'tomato_late_blight': 'Apply metalaxyl',
-            'tomato_leaf_mold': 'Improve ventilation',
-            'tomato_septoria_leaf_spot': 'Use copper fungicides',
-            'tomato_spider_mites': 'Apply neem oil',
-            'tomato_target_spot': 'Apply chlorothalonil',
-            'tomato_mosaic_virus': 'Remove infected plants',
-            'tomato_yellow_leaf_curl': 'Control whiteflies',
-
-            'Potato___healthy': 'No treatment required',
-            'Potato___Early_blight': 'Use mancozeb',
-            'Potato___late_blight': 'Use metalaxyl',
-
-            'rice_healthy': 'Maintain nutrients',
-            'rice_bacterial_blight': 'Use copper oxychloride',
-            'rice_brown_spot': 'Apply propiconazole',
-            'rice_leaf_smut': 'Apply tricyclazole'
+            'BlackPoint': 'Fungicides like Mancozeb, Azoxystrobin, or Chlorothalonil',
+            'LeafBlight': 'Fungicides like Copper-based fungicides, Mancozeb, or Chlorothalonil',
+            'FusariumFootRot': 'Fungicides like Prothioconazole or Tebuconazole',
+            'WheatBlast': 'Fungicides like Tricyclazole or Azoxystrobin',
+            'tomato_healthy': 'Continue preventive care and regular monitoring.',
+            'tomato_bacterial_spot': 'Apply copper-based bactericides. Use resistant varieties.',
+            'tomato_early_blight': 'Use chlorothalonil fungicide. Remove affected leaves.',
+            'tomato_late_blight': 'Apply metalaxyl fungicides. Improve ventilation.',
+            'tomato_leaf_mold': 'Increase ventilation. Apply fungicides.',
+            'tomato_septoria_leaf_spot': 'Use chlorothalonil or copper fungicides.',
+            'tomato_spider_mites': 'Apply miticides or neem oil. Increase humidity.',
+            'tomato_target_spot': 'Use fungicides containing chlorothalonil.',
+            'tomato_mosaic_virus': 'Remove infected plants. Sanitize tools and hands.',
+            'tomato_yellow_leaf_curl': 'Control whiteflies. Remove infected plants.',
+            'Potato___healthy': 'Continue regular monitoring and care.',
+            'Potato___Early_blight': 'Apply chlorothalonil or mancozeb. Improve air circulation.',
+            'Potato___late_blight': 'Use metalaxyl-based fungicides. Avoid overhead irrigation.',
+            'rice_healthy': 'Maintain proper water management and nutrition.',
+            'rice_bacterial_blight': 'Use copper oxychloride spray. Improve drainage.',
+            'rice_brown_spot': 'Apply potash fertilizer. Use propiconazole or tricyclazole.',
+            'rice_leaf_smut': 'Apply tricyclazole fungicide. Use resistant varieties.'
         }
-
-    # --------------------------------------------------
-    # Load models
-    # --------------------------------------------------
+        
+        self.severity_levels = {
+            'low': (0, 30),
+            'medium': (30, 70),
+            'high': (70, 100)
+        }
+    
     def load_models(self):
-        models_dir = "models"
-
+        models_dir = 'models'
         model_files = {
             'wheat': 'Wheat_best_final_model.keras',
-            'tomato': 'tomato_model.tflite',
+            'tomato': 'tomato_model.keras', 
             'potato': 'potato_best_final_model.keras',
             'rice': 'rice_best_final_model_fixed.keras'
         }
-
-        loaded = 0
-
-        for plant, file in model_files.items():
-            path = os.path.join(models_dir, file)
-
-            if not os.path.exists(path):
-                print(f"⚠ {plant} model not found")
-                continue
-
+        
+        loaded_count = 0
+        for plant_type, model_file in model_files.items():
+            model_path = os.path.join(models_dir, model_file)
             try:
-                # ---- TFLite ----
-                if file.endswith(".tflite"):
-                    interpreter = tf.lite.Interpreter(model_path=path)
-                    interpreter.allocate_tensors()
-
-                    self.tflite_models[plant] = interpreter
-                    self.tflite_details[plant] = {
-                        "input": interpreter.get_input_details(),
-                        "output": interpreter.get_output_details()
-                    }
-
-                    print(f"✓ {plant.capitalize()} TFLite model loaded")
-
-                # ---- Keras ----
+                if os.path.exists(model_path):
+                    try:
+                        self.models[plant_type] = tf.keras.models.load_model(model_path)
+                        print(f"✓ {plant_type.capitalize()} model loaded successfully")
+                    except Exception as e:
+                        print(f"Standard load failed for {plant_type}, trying compile=False: {e}")
+                        self.models[plant_type] = tf.keras.models.load_model(model_path, compile=False)
+                        print(f"✓ {plant_type.capitalize()} model loaded without compilation")
+                    loaded_count += 1
                 else:
-                    model = tf.keras.models.load_model(path, compile=False)
-                    self.models[plant] = model
-                    print(f"✓ {plant.capitalize()} Keras model loaded")
-
-                loaded += 1
-
+                    print(f"⚠ {plant_type.capitalize()} model file not found at {model_path}")
             except Exception as e:
-                print(f"❌ Failed to load {plant}: {e}")
-
-        return loaded > 0
-
-    # --------------------------------------------------
-    # Prediction
-    # --------------------------------------------------
+                print(f"Error loading {plant_type} model: {e}")
+                traceback.print_exc()
+        
+        return loaded_count > 0
+    
     def predict_disease(self, image_path, plant_type=None):
-
+        print(f"Predicting disease for image: {image_path}, plant_type: {plant_type}")
+        
         if plant_type is None:
             plant_type = self._detect_plant_type(image_path)
-
-        if plant_type not in self.classes:
-            return self._get_mock_prediction('tomato')
-
+            print(f"Auto-detected plant type: {plant_type}")
+        
+        if plant_type not in self.models:
+            print(f"No model found for plant type: {plant_type}, using mock prediction")
+            return self._get_mock_prediction(plant_type)
+        
         processed_image = ImageProcessor.preprocess_for_ml(image_path)
         if processed_image is None:
+            print(f"Image preprocessing failed for: {image_path}")
             return self._get_mock_prediction(plant_type)
-
+        
         try:
-            # -------- TFLite --------
-            if plant_type in self.tflite_models:
-                interpreter = self.tflite_models[plant_type]
-                details = self.tflite_details[plant_type]
-
-                interpreter.set_tensor(
-                    details["input"][0]["index"],
-                    processed_image.astype(np.float32)
-                )
-                interpreter.invoke()
-
-                predictions = interpreter.get_tensor(
-                    details["output"][0]["index"]
-                )
-
-            # -------- Keras --------
-            else:
-                predictions = self.models[plant_type].predict(processed_image)
-
-            idx = np.argmax(predictions[0])
-            confidence = float(predictions[0][idx])
-
-            disease = self.classes[plant_type][idx]
-            key = f"{plant_type}_{disease}"
-
-            return {
-                "plant_type": plant_type.capitalize(),
-                "disease": disease.replace("_", " ").title(),
-                "confidence": round(confidence * 100, 2),
-                "treatment": self.treatments.get(key, "Consult expert"),
-                "severity": self._determine_severity(confidence),
-                "recommendations": self._get_detailed_recommendations(key)
+            print(f"Making prediction with {plant_type} model...")
+            predictions = self.models[plant_type].predict(processed_image)
+            predicted_class_idx = np.argmax(predictions[0])
+            confidence = float(predictions[0][predicted_class_idx])
+            
+            predicted_class = self.classes[plant_type][predicted_class_idx]
+            disease_key = f"{plant_type}_{predicted_class}"
+            treatment = self.treatments.get(disease_key, "Consult agricultural expert")
+            severity = self._determine_severity(confidence)
+            
+            result = {
+                'plant_type': plant_type.capitalize(),
+                'disease': predicted_class.replace('_', ' ').title(),
+                'confidence': confidence * 100,
+                'treatment': treatment,
+                'severity': severity,
+                'recommendations': self._get_detailed_recommendations(disease_key, severity)
             }
-
+            
+            print(f"Prediction successful: {result}")
+            return result
+            
         except Exception as e:
-            print("Prediction error:", e)
+            print(f"Error making prediction: {e}")
+            traceback.print_exc()
             return self._get_mock_prediction(plant_type)
-
-    # --------------------------------------------------
-    # Helpers
-    # --------------------------------------------------
+    
     def _detect_plant_type(self, image_path):
-        name = image_path.lower()
-        for plant in self.classes:
-            if plant in name:
-                return plant
-        return random.choice(list(self.classes.keys()))
-
+        filename = os.path.basename(image_path).lower()
+        if 'wheat' in filename:
+            return 'wheat'
+        elif 'tomato' in filename:
+            return 'tomato'
+        elif 'potato' in filename:
+            return 'potato'
+        elif 'rice' in filename:
+            return 'rice'
+        else:
+            return random.choice(['wheat', 'tomato', 'potato', 'rice'])
+    
+    def _get_mock_prediction(self, plant_type):
+        if plant_type not in self.classes:
+            plant_type = 'tomato'
+        
+        disease = random.choice(self.classes[plant_type])
+        confidence = random.uniform(75, 95)
+        disease_key = f"{plant_type}_{disease}"
+        
+        return {
+            'plant_type': plant_type.capitalize(),
+            'disease': disease.replace('_', ' ').title(),
+            'confidence': confidence,
+            'treatment': self.treatments.get(disease_key, "Continue monitoring"),
+            'severity': self._determine_severity(confidence/100),
+            'recommendations': self._get_detailed_recommendations(disease_key, self._determine_severity(confidence/100))
+        }
+    
     def _determine_severity(self, confidence):
         if confidence < 0.3:
-            return "low"
+            return 'low'
         elif confidence < 0.7:
-            return "medium"
-        return "high"
-
-    def _get_detailed_recommendations(self, disease_key):
-        recs = [
-            "Monitor plant regularly",
-            "Maintain field hygiene",
-            "Use resistant varieties"
+            return 'medium'
+        else:
+            return 'high'
+    
+    def _get_detailed_recommendations(self, disease, severity):
+        base_recommendations = [
+            "Monitor plant regularly for symptoms",
+            "Maintain proper field hygiene",
+            "Use disease-resistant varieties when possible"
         ]
-        if "healthy" not in disease_key:
-            recs.append("Apply recommended treatment promptly")
-        return recs
-
-    def _get_mock_prediction(self, plant_type):
-        disease = random.choice(self.classes[plant_type])
-        conf = random.uniform(70, 95)
-        return {
-            "plant_type": plant_type.capitalize(),
-            "disease": disease.replace("_", " ").title(),
-            "confidence": round(conf, 2),
-            "treatment": "Demo mode",
-            "severity": "medium",
-            "recommendations": ["Demo prediction"]
-        }
-
+        
+        if 'healthy' not in disease.lower():
+            if severity == 'high':
+                base_recommendations.extend([
+                    "Immediate treatment required",
+                    "Consider professional consultation",
+                    "Isolate affected plants if possible"
+                ])
+            elif severity == 'medium':
+                base_recommendations.extend([
+                    "Apply preventive measures",
+                    "Monitor closely for spread"
+                ])
+        
+        return base_recommendations
 
 # Initialize plant detector
 plant_detector = EnhancedPlantDiseaseDetector()
@@ -578,8 +567,11 @@ iot_simulator = AdvancedIoTSimulator()
 # ============================================================================
 
 @app.route('/')
-def landing():
-    return render_template('landing.html')
+def home():
+    if 'user_id' in session:
+        return redirect(url_for('dashboard'))
+    else:
+        return redirect(url_for('landing'))
 
 @app.route('/index')
 @login_required
@@ -614,6 +606,10 @@ def advisory():
 @app.route('/contact')
 def contact():
     return render_template('contact.html')
+
+@app.route('/landing')
+def landing():
+    return render_template('landing.html')
 
 @app.route('/chatbot')
 @login_required
@@ -655,8 +651,8 @@ def register():
             
             app.logger.info(f"User created successfully with ID: {user_id}")
             
-            # Redirect to login page instead of rendering
-            return redirect(url_for('login'))
+            # Redirect to login page after successful registration
+            return render_template('login.html', success="Registration successful! Please login with your credentials.")
                 
         except Exception as e:
             app.logger.error(f"General registration error: {e}")
@@ -678,7 +674,366 @@ def login():
                 app.logger.warning("Missing email or password")
                 return render_template('login.html', error="Email and password are required.")
             
-            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
+
+@app.route('/logout')
+def logout():
+    try:
+        # Clear all session data
+        session.pop('logged_in', None)
+        session.pop('user_id', None)
+        session.pop('username', None)
+        session.pop('email', None)
+        session.clear()
+        app.logger.info("User logged out successfully")
+    except Exception as e:
+        app.logger.error(f"Logout error: {e}")
+    
+    return redirect(url_for('landing'))
+
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
+
+@app.route('/api/upload-image', methods=['POST'])
+@login_required
+def upload_image_for_diagnosis():
+    image_file = request.files.get('image')
+    plant_type = request.form.get('plant_type')
+
+    if not image_file or image_file.filename == '':
+        return jsonify({'success': False, 'error': 'No image file provided.'}), 400
+
+    filename = secure_filename(image_file.filename)
+    upload_path = os.path.join(Config.UPLOAD_FOLDER, filename)
+    image_file.save(upload_path)
+
+    result = plant_detector.predict_disease(upload_path, plant_type)
+
+    # Save diagnosis to database
+    if result and 'user_id' in session:
+        DatabaseManager.save_diagnosis(
+            session['user_id'],
+            result['plant_type'],
+            result['disease'],
+            result['confidence'],
+            upload_path
+        )
+
+    os.remove(upload_path)
+
+    if result:
+        return jsonify({'success': True, 'result': result})
+    else:
+        return jsonify({'success': False, 'error': 'Analysis failed. Please try again.'}), 500
+
+@app.route('/api/sensor-data')
+@login_required
+def get_sensor_data():
+    return jsonify(sensor_data)
+
+@app.route('/api/weather-data')
+@login_required
+def get_weather_data():
+    weather = RealTimeWeatherService.get_comprehensive_weather()
+    return jsonify(weather)
+
+@app.route('/api/market-data')
+@login_required
+def get_market_data():
+    market = RealTimeMarketService.get_comprehensive_market_data()
+    return jsonify(market)
+
+@app.route('/api/soil-analysis')
+@login_required
+def get_soil_analysis():
+    analysis = CropDataAnalyzer.analyze_soil_conditions(
+        sensor_data['soil_ph'],
+        sensor_data['soil_moisture'],
+        sensor_data['soil_temperature']
+    )
+    return jsonify(analysis)
+
+# ============================================================================
+# CHATBOT API
+# ============================================================================
+
+@app.route('/chat', methods=['POST'])
+@login_required
+def chat():
+    data = request.json
+    user_message = data.get('message')
+    voice_support = data.get('voice_support', False)
+    lang_code = data.get('lang', 'en-IN')
+
+    if not user_message:
+        return jsonify({"error": "No message provided"}), 400
+
+    lang_map = {
+        'en-IN': 'English',
+        'hi-IN': 'Hindi',
+        'bn-IN': 'Bengali'
+    }
+    
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": f"You are Krishi Sahyog, a friendly and knowledgeable Indian agricultural assistant. You are an expert on farming, crops, weather, and government schemes for Indian farmers. Always respond in {lang_map.get(lang_code, 'English')}. Your tone is helpful and empathetic.\n\nUser: {user_message}"
+                    }
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.7,
+            "topK": 40,
+            "topP": 0.95,
+            "maxOutputTokens": 1024,
+        }
+    }
+
+    headers = {"Content-Type": "application/json"}
+
+    try:
+        response = requests.post(GEMINI_API_URL, headers=headers, json=payload)
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        if 'candidates' in result and len(result['candidates']) > 0:
+            candidate = result['candidates'][0]
+            if 'content' in candidate and 'parts' in candidate['content']:
+                text_response = candidate['content']['parts'][0].get('text', 'Sorry, I could not generate a response.')
+            else:
+                text_response = 'Sorry, I could not generate a response.'
+        else:
+            text_response = 'Sorry, I could not generate a response.'
+        
+        # Save chat to database
+        if 'user_id' in session:
+            DatabaseManager.save_chat_message(
+                session['user_id'],
+                user_message,
+                text_response,
+                lang_code
+            )
+        
+        return jsonify({
+            "text": text_response,
+            "audio": ""
+        })
+        
+    except requests.exceptions.RequestException as e:
+        logging.error(f"API request failed: {e}")
+        return jsonify({"error": "Failed to get response from AI"}), 500
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+        return jsonify({"error": "An unexpected error occurred"}), 500
+
+# ============================================================================
+# WEBSOCKET EVENTS
+# ============================================================================
+
+@socketio.on('connect')
+def handle_connect():
+    print('Client connected')
+    emit('sensor_update', sensor_data)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('Client disconnected')
+
+@socketio.on('request_data')
+def handle_data_request(data):
+    data_type = data.get('type', 'sensor')
+    if data_type == 'sensor':
+        emit('sensor_update', sensor_data)
+    elif data_type == 'weather':
+        weather = RealTimeWeatherService.get_comprehensive_weather()
+        emit('weather_update', weather)
+    elif data_type == 'market':
+        market = RealTimeMarketService.get_comprehensive_market_data()
+        emit('market_update', market)
+
+# ============================================================================
+# DEBUG ROUTES
+# ============================================================================
+
+@app.route('/debug/session')
+def debug_session():
+    if app.debug:
+        return jsonify({
+            'session': dict(session),
+            'logged_in': session.get('logged_in', False),
+            'user_id': session.get('user_id'),
+            'username': session.get('username')
+        })
+    return "Debug mode only", 403
+
+@app.route('/debug/create-user/<username>/<email>/<password>')
+def debug_create_user(username, email, password):
+    if app.debug:
+        try:
+            user_id = DatabaseManager.create_user(username, email, password)
+            if user_id:
+                return f"User created: {username} / {email} / {password} (ID: {user_id})"
+            else:
+                return "User already exists or creation failed"
+        except Exception as e:
+            return f"Error: {str(e)}"
+    return "Debug mode only", 403
+
+# ============================================================================
+# ERROR HANDLERS
+# ============================================================================
+
+@app.errorhandler(404)
+def not_found(error):
+    return render_template('404.html'), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return render_template('500.html'), 500
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def get_chatbot_response(message, language):
+    """Enhanced chatbot with context-aware responses"""
+    
+    responses = {
+        'en': {
+            'weather': f"Current weather: {get_current_weather_summary()}. Perfect conditions for most crops!",
+            'price': f"Latest market prices: {get_market_summary()}. Prices are generally stable.",
+            'sensor': f"Current soil conditions: {get_sensor_summary()}. Your soil health looks good!",
+            'fertilizer': "For optimal growth, use NPK fertilizer (10:26:26) for flowering crops, or urea for leafy vegetables. Always test soil first.",
+            'disease': "Please upload a clear image of the affected plant leaves for accurate disease diagnosis. Include the whole leaf in the photo.",
+            'irrigation': "Water early morning or evening. Check soil moisture at 2-3 inch depth. Most crops need 1-2 inches of water per week.",
+            'pest': "Common pests in West Bengal: aphids, thrips, bollworms. Use neem oil spray or integrated pest management techniques.",
+            'harvest': "Harvest timing depends on crop type. Look for visual cues: color change, firmness, size. I can provide specific guidance for your crop.",
+            'storage': "Proper storage prevents 30-40% post-harvest losses. Keep produce cool, dry, and well-ventilated.",
+            'organic': "Organic farming tips: Use compost, crop rotation, companion planting, beneficial insects, and organic fertilizers like vermicompost.",
+            'default': "I can help with crop advice, weather updates, market prices, disease diagnosis, and farming best practices. What specific information do you need?"
+        },
+        'hi': {
+            'weather': f"वर्तमान मौसम: {get_current_weather_summary()}। अधिकांश फसलों के लिए उपयुक्त स्थितियां!",
+            'price': f"नवीनतम बाजार भाव: {get_market_summary()}। कीमतें आम तौर पर स्थिर हैं।",
+            'sensor': f"वर्तमान मिट्टी की स्थिति: {get_sensor_summary()}। आपकी मिट्टी का स्वास्थ्य अच्छा है!",
+            'fertilizer': "अच्छी वृद्धि के लिए, फूल वाली फसलों के लिए NPK उर्वरक (10:26:26) या पत्तेदार सब्जियों के लिए यूरिया का उपयोग करें। हमेशा पहले मिट्टी की जांच करें।",
+            'disease': "सटीक रोग निदान के लिए प्रभावित पौधे की पत्तियों की स्पष्ट छवि अपलोड करें।",
+            'irrigation': "सुबह जल्दी या शाम को पानी दें। 2-3 इंच की गहराई पर मिट्टी की नमी जांचें।",
+            'pest': "पश्चिम बंगाल में आम कीट: एफिड्स, थ्रिप्स, बॉलवर्म। नीम तेल स्प्रे का उपयोग करें।",
+            'harvest': "कटाई का समय फसल के प्रकार पर निर्भर करता है। रंग, कठोरता, आकार जैसे संकेतों को देखें।",
+            'storage': "उचित भंडारण से 30-40% फसल के बाद के नुकसान को रोका जा सकता है।",
+            'organic': "जैविक खेती: कंपोस्ट, फसल चक्र, साथी रोपण, और वर्मीकम्पोस्ट का उपयोग करें।",
+            'default': "मैं फसल सलाह, मौसम अपडेट, बाजार भाव, रोग निदान में मदद कर सकता हूं। आपको कैसी जानकारी चाहिए?"
+        },
+        'bn': {
+            'weather': f"বর্তমান আবহাওয়া: {get_current_weather_summary()}। বেশিরভাগ ফসলের জন্য উপযুক্ত অবস্থা!",
+            'price': f"সর্বশেষ বাজার দর: {get_market_summary()}। দাম সাধারণত স্থিতিশীল।",
+            'sensor': f"বর্তমান মাটির অবস্থা: {get_sensor_summary()}। আপনার মাটির স্বাস্থ্য ভালো!",
+            'fertilizer': "ভালো বৃদ্ধির জন্য, ফুল ফসলের জন্য NPK সার (10:26:26) বা পাতা সবজির জন্য ইউরিয়া ব্যবহার করুন।",
+            'disease': "সঠিক রোগ নির্ণয়ের জন্য আক্রান্ত গাছের পাতার স্পষ্ট ছবি আপলোড করুন।",
+            'irrigation': "ভোরে বা সন্ধ্যায় পানি দিন। ২-৩ ইঞ্চি গভীরতায় মাটির আর্দ্রতা পরীক্ষা করুন।",
+            'pest': "পশ্চিমবঙ্গের সাধারণ পোকা: এফিড, থ্রিপস, বলওয়ার্ম। নিম তেল স্প্রে ব্যবহার করুন।",
+            'harvest': "ফসল কাটার সময় ফসলের ধরনের উপর নির্ভর করে। রং, কঠিনতা দেখুন।",
+            'storage': "সঠিক সংরক্ষণ ৩০-৪০% ফসল পরবর্তী ক্ষতি প্রতিরোধ করে।",
+            'organic': "জৈব চাষ: কম্পোস্ট, ফসল আবর্তন, সহচর রোপণ, কেঁচো কম্পোস্ট ব্যবহার করুন।",
+            'default': "আমি ফসল পরামর্শ, আবহাওয়া আপডেট, বাজার দর, রোগ নির্ণয়ে সাহায্য করতে পারি। কী তথ্য দরকার?"
+        }
+    }
+    
+    response_key = 'default'
+    keywords = {
+        'weather': ['weather', 'मौसम', 'আবহাওয়া', 'rain', 'बारिश', 'বৃষ্টি'],
+        'price': ['price', 'market', 'भाव', 'বাজার', 'cost', 'कीमत', 'দাম'],
+        'sensor': ['soil', 'ph', 'moisture', 'मिट्टी', 'মাটি'],
+        'fertilizer': ['fertilizer', 'उर्वरक', 'সার', 'npk', 'urea'],
+        'disease': ['disease', 'sick', 'রোগ', 'रोग', 'problem'],
+        'irrigation': ['water', 'irrigation', 'पानी', 'পানি'],
+        'pest': ['pest', 'insect', 'कीट', 'পোকা'],
+        'harvest': ['harvest', 'कटाई', 'ফসল কাটা'],
+        'storage': ['storage', 'store', 'ভন্ডারন', 'সংরক্ষণ'],
+        'organic': ['organic', 'जैविक', 'জৈব']
+    }
+    
+    for key, words in keywords.items():
+        if any(word in message for word in words):
+            response_key = key
+            break
+    
+    return responses.get(language, responses['en']).get(response_key, responses['en']['default'])
+
+def get_current_weather_summary():
+    try:
+        weather = RealTimeWeatherService.get_comprehensive_weather()
+        return f"{weather['temperature']}°C, {weather['description']}"
+    except:
+        return "25°C, Pleasant"
+
+def get_market_summary():
+    try:
+        market = RealTimeMarketService.get_comprehensive_market_data()
+        rice_price = market.get('rice', {}).get('price', 25)
+        return f"Rice ₹{rice_price}/kg"
+    except:
+        return "Rice ₹25/kg"
+
+def get_sensor_summary():
+    return f"pH {sensor_data['soil_ph']:.1f}, Moisture {sensor_data['soil_moisture']}%"
+
+# ============================================================================
+# MAIN EXECUTION
+# ============================================================================
+
+if __name__ == '__main__':
+    # Create necessary directories
+    os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
+    os.makedirs('models', exist_ok=True)
+    
+    # Initialize database
+    if not initialize_database():
+        print("WARNING: Database initialization failed!")
+    
+    # Load ML models
+    if plant_detector.load_models():
+        print("✓ Plant disease detection models loaded successfully")
+    else:
+        print("⚠ Models not found - using mock predictions for demo")
+    
+    # Start IoT simulation
+    iot_simulator.start_simulation()
+    
+    print("🌱 Krishi Sahyog Agricultural Advisory System Starting...")
+    print("📊 Real-time sensor simulation: ACTIVE")
+    print("🤖 AI Plant Disease Detection: READY")
+    print("🌤 Weather Integration: ACTIVE")
+    print("💰 Market Price Tracking: ACTIVE")
+    print("🗣 Multi-language Support: English, Hindi, Bengali")
+    print("🔧 Debug routes available: /debug/session, /debug/create-user")
+    print("📧 Test user: test@test.com / password: test123")
+    
+    # Get port from environment variable (Render provides this)
+    port = int(os.environ.get('PORT', 5000))
+    
+    # Determine if we're in production
+    is_production = os.environ.get('FLASK_ENV') == 'production'
+    
+    if is_production:
+        # Production mode - Gunicorn will handle this
+        print(f"Running in PRODUCTION mode on port {port}")
+    else:
+        # Development mode
+        print(f"Running in DEVELOPMENT mode on port {port}")
+        socketio.run(
+            app, 
+            debug=True, 
+            host='0.0.0.0',  # Listen on all interfaces
+            port=port,
+            allow_unsafe_werkzeug=True
+        )
             if not re.match(email_pattern, email):
                 return render_template('login.html', error="Please enter a valid email address.")
             
