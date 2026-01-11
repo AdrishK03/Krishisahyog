@@ -1,0 +1,8 @@
+__pycache__/
+.env
+*.pyc
+train_model.py
+agricultural_data.db
+fertilizer_prediction_model.pkl
+model\fert_encoder.pkl
+crop_encoder.pkl
