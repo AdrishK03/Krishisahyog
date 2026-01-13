@@ -61,7 +61,7 @@ else:
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Initialize translator
 translator = Translator()
