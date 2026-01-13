@@ -658,8 +658,7 @@ def login():
                 app.logger.warning("Missing email or password")
                 return render_template('login.html', error="Email and password are required.")
             
-            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
-
+            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
 @app.route('/logout')
 def logout():
     try:
