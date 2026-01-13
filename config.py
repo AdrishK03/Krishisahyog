@@ -5,10 +5,13 @@ from pathlib import Path
 class Config:
     # Secret key for session management
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'krishimitra-secret-key-2024'
+
+    # Database Settings (PostgreSQL on Render)
+    DATABASE_URL = os.environ.get('DATABASE_URL')
     
-    # Database configuration
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///agricultural_data.db'
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # If Render provides postgres:// URL, convert to postgresql://
+    if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
+        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
     
     # File upload settings
     UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads')
