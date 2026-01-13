@@ -18,7 +18,7 @@ from threading import Thread
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash
 import tflite_runtime.interpreter as tflite
-import numpy as npimport numpy as np
+import numpy as np
 import re
 import traceback
 import joblib
