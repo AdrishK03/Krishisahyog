@@ -652,13 +652,23 @@ def login():
             email = request.form.get('email', '').strip().lower()
             password = request.form.get('password', '')
             
-            app.logger.info(f"Login attempt for email: {email}")
+            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+            if not re.match(email_pattern, email):
+                return render_template('login.html', error="Invalid email format.")
             
-            if not email or not password:
-                app.logger.warning("Missing email or password")
-                return render_template('login.html', error="Email and password are required.")
-            
-            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+            user = DatabaseManager.get_user_by_email(email)
+            if user and check_password_hash(user[3], password):
+                session.clear()
+                session['logged_in'] = True
+                session['user_id'] = user[0]
+                session['username'] = user[1]
+                session.permanent = True
+                return redirect(url_for('dashboard'))
+            return render_template('login.html', error="Invalid credentials.")
+        except Exception as e:
+            app.logger.error(f"Login error: {e}")
+            return render_template('login.html', error="An error occurred.")
+    return render_template('login.html')
 @app.route('/logout')
 def logout():
     try:
