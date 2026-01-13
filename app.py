@@ -61,7 +61,7 @@ else:
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Initialize translator
 translator = Translator()
@@ -103,8 +103,8 @@ sensor_data = {
 try:
     fertilizer_model = joblib.load(os.path.join(Config.MODEL_DIR, 'fertilizer_model.pkl'))
     print("✓ Fertilizer recommendation model loaded successfully.")
-except:
-    print("⚠ Fertilizer model file not found. Using mock predictions.")
+except Exception as e:
+    print(f"⚠ Fertilizer model file not found. Using mock predictions. Error: {e}")
     fertilizer_model = None
 
 # ============================================================================
@@ -291,7 +291,7 @@ class RealTimeWeatherService:
             else:
                 return RealTimeWeatherService._get_enhanced_mock_weather()
         except Exception as e:
-            print(f"Weather service error: {e}")
+            logging.error(f"Weather service error: {e}")
             return RealTimeWeatherService._get_enhanced_mock_weather()
     
     @staticmethod
@@ -304,34 +304,38 @@ class RealTimeWeatherService:
             'units': 'metric'
         }
         
-        response = requests.get(url, params=params, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
+        try:
+            response = requests.get(url, params=params, timeout=10)
             
-            forecast_url = f"{Config.WEATHER_BASE_URL}/forecast"
-            forecast_response = requests.get(forecast_url, params=params, timeout=10)
-            forecast_data = forecast_response.json() if forecast_response.status_code == 200 else None
-            
-            weather_result = {
-                'temperature': round(data['main']['temp'], 1),
-                'humidity': data['main']['humidity'],
-                'description': data['weather'][0]['description'].title(),
-                'wind_speed': data.get('wind', {}).get('speed', 0),
-                'pressure': data['main']['pressure'],
-                'location': data.get('name', Config.DEFAULT_LOCATION),
-                'icon': data['weather'][0]['icon'],
-                'visibility': data.get('visibility', 10000) / 1000,
-                'uv_index': random.randint(1, 8),
-                'rainfall': data.get('rain', {}).get('1h', 0),
-                'alerts': RealTimeWeatherService._generate_agricultural_alerts(data)
-            }
-            
-            if forecast_data:
-                weather_result['forecast'] = RealTimeWeatherService._process_forecast(forecast_data)
-            
-            return weather_result
-        else:
+            if response.status_code == 200:
+                data = response.json()
+                
+                forecast_url = f"{Config.WEATHER_BASE_URL}/forecast"
+                forecast_response = requests.get(forecast_url, params=params, timeout=10)
+                forecast_data = forecast_response.json() if forecast_response.status_code == 200 else None
+                
+                weather_result = {
+                    'temperature': round(data['main']['temp'], 1),
+                    'humidity': data['main']['humidity'],
+                    'description': data['weather'][0]['description'].title(),
+                    'wind_speed': data.get('wind', {}).get('speed', 0),
+                    'pressure': data['main']['pressure'],
+                    'location': data.get('name', Config.DEFAULT_LOCATION),
+                    'icon': data['weather'][0]['icon'],
+                    'visibility': data.get('visibility', 10000) / 1000,
+                    'uv_index': random.randint(1, 8),
+                    'rainfall': data.get('rain', {}).get('1h', 0),
+                    'alerts': RealTimeWeatherService._generate_agricultural_alerts(data)
+                }
+                
+                if forecast_data:
+                    weather_result['forecast'] = RealTimeWeatherService._process_forecast(forecast_data)
+                
+                return weather_result
+            else:
+                return RealTimeWeatherService._get_enhanced_mock_weather()
+        except Exception as e:
+            logging.error(f"Real weather fetch error: {e}")
             return RealTimeWeatherService._get_enhanced_mock_weather()
     
     @staticmethod
@@ -433,7 +437,7 @@ class RealTimeMarketService:
             if real_data:
                 return real_data
         except Exception as e:
-            print(f"Real market data error: {e}")
+            logging.error(f"Real market data error: {e}")
         
         return RealTimeMarketService._get_enhanced_mock_data()
     
@@ -494,15 +498,14 @@ class AdvancedIoTSimulator:
     def start_simulation(self):
         if not self.running:
             self.running = True
-            self.thread = Thread(target=self._simulate_sensors)
-            self.thread.daemon = True
+            self.thread = Thread(target=self._simulate_sensors, daemon=True)
             self.thread.start()
             print("IoT Sensor simulation started")
     
     def stop_simulation(self):
         self.running = False
         if self.thread:
-            self.thread.join()
+            self.thread.join(timeout=5)
     
     def _simulate_sensors(self):
         global sensor_data
@@ -528,20 +531,27 @@ class AdvancedIoTSimulator:
                 
                 sensor_data['last_updated'] = datetime.now().isoformat()
                 
-                DatabaseManager.save_sensor_reading(
-                    sensor_data['soil_ph'],
-                    sensor_data['soil_moisture'],
-                    sensor_data['soil_temperature'],
-                    sensor_data['nitrogen'],
-                    sensor_data['phosphorus'],
-                    sensor_data['potassium']
-                )
+                try:
+                    DatabaseManager.save_sensor_reading(
+                        sensor_data['soil_ph'],
+                        sensor_data['soil_moisture'],
+                        sensor_data['soil_temperature'],
+                        sensor_data['nitrogen'],
+                        sensor_data['phosphorus'],
+                        sensor_data['potassium']
+                    )
+                except Exception as db_error:
+                    logging.error(f"Database error in IoT simulator: {db_error}")
                 
-                socketio.emit('sensor_update', sensor_data)
+                try:
+                    socketio.emit('sensor_update', sensor_data)
+                except Exception as socket_error:
+                    logging.error(f"Socket error in IoT simulator: {socket_error}")
+                
                 time.sleep(Config.IOT_UPDATE_INTERVAL)
                 
             except Exception as e:
-                print(f"IoT Simulation error: {e}")
+                logging.error(f"IoT Simulation error: {e}")
                 time.sleep(5)
 
 iot_simulator = AdvancedIoTSimulator()
@@ -635,7 +645,6 @@ def register():
             
             app.logger.info(f"User created successfully with ID: {user_id}")
             
-            # Redirect to login page after successful registration
             return render_template('login.html', success="Registration successful! Please login with your credentials.")
                 
         except Exception as e:
@@ -663,16 +672,23 @@ def login():
                 session['user_id'] = user[0]
                 session['username'] = user[1]
                 session.permanent = True
+                
+                try:
+                    DatabaseManager.update_last_login(user[0])
+                except Exception as db_error:
+                    logging.error(f"Error updating last login: {db_error}")
+                
                 return redirect(url_for('dashboard'))
             return render_template('login.html', error="Invalid credentials.")
         except Exception as e:
             app.logger.error(f"Login error: {e}")
+            app.logger.error(traceback.format_exc())
             return render_template('login.html', error="An error occurred.")
     return render_template('login.html')
+
 @app.route('/logout')
 def logout():
     try:
-        # Clear all session data
         session.pop('logged_in', None)
         session.pop('user_id', None)
         session.pop('username', None)
@@ -691,34 +707,42 @@ def logout():
 @app.route('/api/upload-image', methods=['POST'])
 @login_required
 def upload_image_for_diagnosis():
-    image_file = request.files.get('image')
-    plant_type = request.form.get('plant_type')
+    try:
+        image_file = request.files.get('image')
+        plant_type = request.form.get('plant_type')
 
-    if not image_file or image_file.filename == '':
-        return jsonify({'success': False, 'error': 'No image file provided.'}), 400
+        if not image_file or image_file.filename == '':
+            return jsonify({'success': False, 'error': 'No image file provided.'}), 400
 
-    filename = secure_filename(image_file.filename)
-    upload_path = os.path.join(Config.UPLOAD_FOLDER, filename)
-    image_file.save(upload_path)
+        filename = secure_filename(image_file.filename)
+        upload_path = os.path.join(Config.UPLOAD_FOLDER, filename)
+        image_file.save(upload_path)
 
-    result = plant_detector.predict_disease(upload_path, plant_type)
+        result = plant_detector.predict_disease(upload_path, plant_type)
 
-    # Save diagnosis to database
-    if result and 'user_id' in session:
-        DatabaseManager.save_diagnosis(
-            session['user_id'],
-            result['plant_type'],
-            result['disease'],
-            result['confidence'],
-            upload_path
-        )
+        if result and 'user_id' in session:
+            try:
+                DatabaseManager.save_diagnosis(
+                    session['user_id'],
+                    result['plant_type'],
+                    result['disease'],
+                    result['confidence'],
+                    upload_path
+                )
+            except Exception as db_error:
+                logging.error(f"Error saving diagnosis: {db_error}")
 
-    os.remove(upload_path)
+        if os.path.exists(upload_path):
+            os.remove(upload_path)
 
-    if result:
-        return jsonify({'success': True, 'result': result})
-    else:
-        return jsonify({'success': False, 'error': 'Analysis failed. Please try again.'}), 500
+        if result:
+            return jsonify({'success': True, 'result': result})
+        else:
+            return jsonify({'success': False, 'error': 'Analysis failed. Please try again.'}), 500
+    except Exception as e:
+        logging.error(f"Upload image error: {e}")
+        logging.error(traceback.format_exc())
+        return jsonify({'success': False, 'error': 'An error occurred during image upload.'}), 500
 
 @app.route('/api/sensor-data')
 @login_required
@@ -740,12 +764,16 @@ def get_market_data():
 @app.route('/api/soil-analysis')
 @login_required
 def get_soil_analysis():
-    analysis = CropDataAnalyzer.analyze_soil_conditions(
-        sensor_data['soil_ph'],
-        sensor_data['soil_moisture'],
-        sensor_data['soil_temperature']
-    )
-    return jsonify(analysis)
+    try:
+        analysis = CropDataAnalyzer.analyze_soil_conditions(
+            sensor_data['soil_ph'],
+            sensor_data['soil_moisture'],
+            sensor_data['soil_temperature']
+        )
+        return jsonify(analysis)
+    except Exception as e:
+        logging.error(f"Soil analysis error: {e}")
+        return jsonify({'error': 'Failed to analyze soil conditions'}), 500
 
 # ============================================================================
 # CHATBOT API
@@ -754,74 +782,105 @@ def get_soil_analysis():
 @app.route('/chat', methods=['POST'])
 @login_required
 def chat():
-    data = request.json
-    user_message = data.get('message')
-    voice_support = data.get('voice_support', False)
-    lang_code = data.get('lang', 'en-IN')
-
-    if not user_message:
-        return jsonify({"error": "No message provided"}), 400
-
-    lang_map = {
-        'en-IN': 'English',
-        'hi-IN': 'Hindi',
-        'bn-IN': 'Bengali'
-    }
-    
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": f"You are Krishi Sahyog, a friendly and knowledgeable Indian agricultural assistant. You are an expert on farming, crops, weather, and government schemes for Indian farmers. Always respond in {lang_map.get(lang_code, 'English')}. Your tone is helpful and empathetic.\n\nUser: {user_message}"
-                    }
-                ]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.7,
-            "topK": 40,
-            "topP": 0.95,
-            "maxOutputTokens": 1024,
-        }
-    }
-
-    headers = {"Content-Type": "application/json"}
-
     try:
-        response = requests.post(GEMINI_API_URL, headers=headers, json=payload)
-        response.raise_for_status()
+        data = request.json
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
         
-        result = response.json()
+        user_message = data.get('message')
+        voice_support = data.get('voice_support', False)
+        lang_code = data.get('lang', 'en-IN')
+
+        if not user_message:
+            return jsonify({"error": "No message provided"}), 400
+
+        lang_map = {
+            'en-IN': 'English',
+            'hi-IN': 'Hindi',
+            'bn-IN': 'Bengali'
+        }
         
-        if 'candidates' in result and len(result['candidates']) > 0:
-            candidate = result['candidates'][0]
-            if 'content' in candidate and 'parts' in candidate['content']:
-                text_response = candidate['content']['parts'][0].get('text', 'Sorry, I could not generate a response.')
+        if not api_key or api_key == "your_google_api_key_here":
+            fallback_response = get_chatbot_response(user_message, lang_code.split('-')[0].lower())
+            try:
+                if 'user_id' in session:
+                    DatabaseManager.save_chat_message(
+                        session['user_id'],
+                        user_message,
+                        fallback_response,
+                        lang_code
+                    )
+            except Exception as db_error:
+                logging.error(f"Error saving chat: {db_error}")
+            
+            return jsonify({
+                "text": fallback_response,
+                "audio": ""
+            })
+        
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": f"You are Krishi Sahyog, a friendly and knowledgeable Indian agricultural assistant. You are an expert on farming, crops, weather, and government schemes for Indian farmers. Always respond in {lang_map.get(lang_code, 'English')}. Your tone is helpful and empathetic.\n\nUser: {user_message}"
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.7,
+                "topK": 40,
+                "topP": 0.95,
+                "maxOutputTokens": 1024,
+            }
+        }
+
+        headers = {"Content-Type": "application/json"}
+
+        try:
+            response = requests.post(GEMINI_API_URL, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            if 'candidates' in result and len(result['candidates']) > 0:
+                candidate = result['candidates'][0]
+                if 'content' in candidate and 'parts' in candidate['content']:
+                    text_response = candidate['content']['parts'][0].get('text', 'Sorry, I could not generate a response.')
+                else:
+                    text_response = 'Sorry, I could not generate a response.'
             else:
                 text_response = 'Sorry, I could not generate a response.'
-        else:
-            text_response = 'Sorry, I could not generate a response.'
-        
-        # Save chat to database
-        if 'user_id' in session:
-            DatabaseManager.save_chat_message(
-                session['user_id'],
-                user_message,
-                text_response,
-                lang_code
-            )
-        
-        return jsonify({
-            "text": text_response,
-            "audio": ""
-        })
-        
-    except requests.exceptions.RequestException as e:
-        logging.error(f"API request failed: {e}")
-        return jsonify({"error": "Failed to get response from AI"}), 500
+            
+            try:
+                if 'user_id' in session:
+                    DatabaseManager.save_chat_message(
+                        session['user_id'],
+                        user_message,
+                        text_response,
+                        lang_code
+                    )
+            except Exception as db_error:
+                logging.error(f"Error saving chat message: {db_error}")
+            
+            return jsonify({
+                "text": text_response,
+                "audio": ""
+            })
+            
+        except requests.exceptions.Timeout:
+            logging.error("Gemini API request timed out")
+            fallback = get_chatbot_response(user_message, lang_code.split('-')[0].lower())
+            return jsonify({"text": fallback, "audio": ""}), 200
+        except requests.exceptions.RequestException as e:
+            logging.error(f"API request failed: {e}")
+            fallback = get_chatbot_response(user_message, lang_code.split('-')[0].lower())
+            return jsonify({"text": fallback, "audio": ""}), 200
+            
     except Exception as e:
-        logging.error(f"Unexpected error: {e}")
+        logging.error(f"Chat endpoint error: {e}")
+        logging.error(traceback.format_exc())
         return jsonify({"error": "An unexpected error occurred"}), 500
 
 # ============================================================================
@@ -830,24 +889,30 @@ def chat():
 
 @socketio.on('connect')
 def handle_connect():
-    print('Client connected')
-    emit('sensor_update', sensor_data)
+    logging.info('Client connected')
+    try:
+        emit('sensor_update', sensor_data)
+    except Exception as e:
+        logging.error(f"Error on connect: {e}")
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    print('Client disconnected')
+    logging.info('Client disconnected')
 
 @socketio.on('request_data')
 def handle_data_request(data):
-    data_type = data.get('type', 'sensor')
-    if data_type == 'sensor':
-        emit('sensor_update', sensor_data)
-    elif data_type == 'weather':
-        weather = RealTimeWeatherService.get_comprehensive_weather()
-        emit('weather_update', weather)
-    elif data_type == 'market':
-        market = RealTimeMarketService.get_comprehensive_market_data()
-        emit('market_update', market)
+    try:
+        data_type = data.get('type', 'sensor') if data else 'sensor'
+        if data_type == 'sensor':
+            emit('sensor_update', sensor_data)
+        elif data_type == 'weather':
+            weather = RealTimeWeatherService.get_comprehensive_weather()
+            emit('weather_update', weather)
+        elif data_type == 'market':
+            market = RealTimeMarketService.get_comprehensive_market_data()
+            emit('market_update', market)
+    except Exception as e:
+        logging.error(f"Error handling data request: {e}")
 
 # ============================================================================
 # DEBUG ROUTES
@@ -887,6 +952,7 @@ def not_found(error):
 
 @app.errorhandler(500)
 def internal_error(error):
+    app.logger.error(f"500 error: {error}")
     return render_template('500.html'), 500
 
 # ============================================================================
@@ -948,12 +1014,12 @@ def get_chatbot_response(message, language):
         'irrigation': ['water', 'irrigation', 'पानी', 'পানি'],
         'pest': ['pest', 'insect', 'कीट', 'পোকা'],
         'harvest': ['harvest', 'कटाई', 'ফসল কাটা'],
-        'storage': ['storage', 'store', 'ভন্ডারন', 'সংরক্ষণ'],
+        'storage': ['storage', 'store', 'ভন्डारन', 'সংরক্ষণ'],
         'organic': ['organic', 'जैविक', 'জৈব']
     }
     
     for key, words in keywords.items():
-        if any(word in message for word in words):
+        if any(word.lower() in message.lower() for word in words):
             response_key = key
             break
     
@@ -963,7 +1029,8 @@ def get_current_weather_summary():
     try:
         weather = RealTimeWeatherService.get_comprehensive_weather()
         return f"{weather['temperature']}°C, {weather['description']}"
-    except:
+    except Exception as e:
+        logging.error(f"Error getting weather summary: {e}")
         return "25°C, Pleasant"
 
 def get_market_summary():
@@ -971,32 +1038,39 @@ def get_market_summary():
         market = RealTimeMarketService.get_comprehensive_market_data()
         rice_price = market.get('rice', {}).get('price', 25)
         return f"Rice ₹{rice_price}/kg"
-    except:
+    except Exception as e:
+        logging.error(f"Error getting market summary: {e}")
         return "Rice ₹25/kg"
 
 def get_sensor_summary():
-    return f"pH {sensor_data['soil_ph']:.1f}, Moisture {sensor_data['soil_moisture']}%"
+    try:
+        return f"pH {sensor_data['soil_ph']:.1f}, Moisture {sensor_data['soil_moisture']}%"
+    except Exception as e:
+        logging.error(f"Error getting sensor summary: {e}")
+        return "pH 6.5, Moisture 65%"
 
 # ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 
 if __name__ == '__main__':
-    # Create necessary directories
-    os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
-    os.makedirs('models', exist_ok=True)
+    try:
+        os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
+        os.makedirs('models', exist_ok=True)
+    except Exception as e:
+        logging.error(f"Error creating directories: {e}")
     
-    # Initialize database
-    if not initialize_database():
-        print("WARNING: Database initialization failed!")
+    try:
+        if not initialize_database():
+            print("WARNING: Database initialization failed!")
+    except Exception as e:
+        logging.error(f"Database initialization error: {e}")
     
-    # Load ML models
     if plant_detector.load_models():
         print("✓ Plant disease detection models loaded successfully")
     else:
         print("⚠ Models not found - using mock predictions for demo")
     
-    # Start IoT simulation
     iot_simulator.start_simulation()
     
     print("🌱 Krishi Sahyog Agricultural Advisory System Starting...")
@@ -1008,410 +1082,12 @@ if __name__ == '__main__':
     print("🔧 Debug routes available: /debug/session, /debug/create-user")
     print("📧 Test user: test@test.com / password: test123")
     
-    # Get port from environment variable (Render provides this)
     port = int(os.environ.get('PORT', 5000))
-    
-    # Determine if we're in production
     is_production = os.environ.get('FLASK_ENV') == 'production'
     
     if is_production:
-        # Production mode - Gunicorn will handle this
         print(f"Running in PRODUCTION mode on port {port}")
+        socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=False)
     else:
-        # Development mode
         print(f"Running in DEVELOPMENT mode on port {port}")
-        socketio.run(
-            app, 
-            debug=True, 
-            host='0.0.0.0',  # Listen on all interfaces
-            port=port,
-            allow_unsafe_werkzeug=True
-        )
-            if not re.match(email_pattern, email):
-                return render_template('login.html', error="Please enter a valid email address.")
-            
-            # Get user from database
-            user = DatabaseManager.get_user_by_email(email)
-            
-            if user is None:
-                app.logger.warning(f"User not found for email: {email}")
-                return render_template('login.html', error="Invalid email or password.")
-            
-            # Check password
-            if check_password_hash(user[3], password):
-                # Clear any existing session
-                session.clear()
-                
-                # Set new session
-                session['logged_in'] = True
-                session['user_id'] = user[0]
-                session['username'] = user[1]
-                session['email'] = user[2]
-                session.permanent = True
-                
-                # Update last login
-                DatabaseManager.update_last_login(user[0])
-                
-                app.logger.info(f"Successful login for user: {user[1]} (ID: {user[0]})")
-                app.logger.info(f"Session data: {dict(session)}")
-                
-                return redirect(url_for('dashboard'))
-            else:
-                app.logger.warning(f"Invalid password for email: {email}")
-                return render_template('login.html', error="Invalid email or password.")
-                
-        except Exception as e:
-            app.logger.error(f"General login error: {e}")
-            app.logger.error(traceback.format_exc())
-            return render_template('login.html', error="An error occurred during login. Please try again.")
-    
-    # GET request - show login form
-    return render_template('login.html')
-
-@app.route('/logout')
-def logout():
-    try:
-        # Clear all session data
-        session.pop('logged_in', None)
-        session.pop('user_id', None)
-        session.pop('username', None)
-        session.pop('email', None)
-        session.clear()
-        app.logger.info("User logged out successfully")
-    except Exception as e:
-        app.logger.error(f"Logout error: {e}")
-    
-    return redirect(url_for('landing'))
-
-# ============================================================================
-# API ENDPOINTS
-# ============================================================================
-
-@app.route('/api/upload-image', methods=['POST'])
-@login_required
-def upload_image_for_diagnosis():
-    image_file = request.files.get('image')
-    plant_type = request.form.get('plant_type')
-
-    if not image_file or image_file.filename == '':
-        return jsonify({'success': False, 'error': 'No image file provided.'}), 400
-
-    filename = secure_filename(image_file.filename)
-    upload_path = os.path.join(Config.UPLOAD_FOLDER, filename)
-    image_file.save(upload_path)
-
-    result = plant_detector.predict_disease(upload_path, plant_type)
-
-    # Save diagnosis to database
-    if result and 'user_id' in session:
-        DatabaseManager.save_diagnosis(
-            session['user_id'],
-            result['plant_type'],
-            result['disease'],
-            result['confidence'],
-            upload_path
-        )
-
-    os.remove(upload_path)
-
-    if result:
-        return jsonify({'success': True, 'result': result})
-    else:
-        return jsonify({'success': False, 'error': 'Analysis failed. Please try again.'}), 500
-
-@app.route('/api/sensor-data')
-@login_required
-def get_sensor_data():
-    return jsonify(sensor_data)
-
-@app.route('/api/weather-data')
-@login_required
-def get_weather_data():
-    weather = RealTimeWeatherService.get_comprehensive_weather()
-    return jsonify(weather)
-
-@app.route('/api/market-data')
-@login_required
-def get_market_data():
-    market = RealTimeMarketService.get_comprehensive_market_data()
-    return jsonify(market)
-
-@app.route('/api/soil-analysis')
-@login_required
-def get_soil_analysis():
-    analysis = CropDataAnalyzer.analyze_soil_conditions(
-        sensor_data['soil_ph'],
-        sensor_data['soil_moisture'],
-        sensor_data['soil_temperature']
-    )
-    return jsonify(analysis)
-
-# ============================================================================
-# CHATBOT API
-# ============================================================================
-
-@app.route('/chat', methods=['POST'])
-@login_required
-def chat():
-    data = request.json
-    user_message = data.get('message')
-    voice_support = data.get('voice_support', False)
-    lang_code = data.get('lang', 'en-IN')
-
-    if not user_message:
-        return jsonify({"error": "No message provided"}), 400
-
-    lang_map = {
-        'en-IN': 'English',
-        'hi-IN': 'Hindi',
-        'bn-IN': 'Bengali'
-    }
-    
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": f"You are Krishi Sahyog, a friendly and knowledgeable Indian agricultural assistant. You are an expert on farming, crops, weather, and government schemes for Indian farmers. Always respond in {lang_map.get(lang_code, 'English')}. Your tone is helpful and empathetic.\n\nUser: {user_message}"
-                    }
-                ]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.7,
-            "topK": 40,
-            "topP": 0.95,
-            "maxOutputTokens": 1024,
-        }
-    }
-
-    headers = {"Content-Type": "application/json"}
-
-    try:
-        response = requests.post(GEMINI_API_URL, headers=headers, json=payload)
-        response.raise_for_status()
-        
-        result = response.json()
-        
-        if 'candidates' in result and len(result['candidates']) > 0:
-            candidate = result['candidates'][0]
-            if 'content' in candidate and 'parts' in candidate['content']:
-                text_response = candidate['content']['parts'][0].get('text', 'Sorry, I could not generate a response.')
-            else:
-                text_response = 'Sorry, I could not generate a response.'
-        else:
-            text_response = 'Sorry, I could not generate a response.'
-        
-        # Save chat to database
-        if 'user_id' in session:
-            DatabaseManager.save_chat_message(
-                session['user_id'],
-                user_message,
-                text_response,
-                lang_code
-            )
-        
-        return jsonify({
-            "text": text_response,
-            "audio": ""
-        })
-        
-    except requests.exceptions.RequestException as e:
-        logging.error(f"API request failed: {e}")
-        return jsonify({"error": "Failed to get response from AI"}), 500
-    except Exception as e:
-        logging.error(f"Unexpected error: {e}")
-        return jsonify({"error": "An unexpected error occurred"}), 500
-
-# ============================================================================
-# WEBSOCKET EVENTS
-# ============================================================================
-
-@socketio.on('connect')
-def handle_connect():
-    print('Client connected')
-    emit('sensor_update', sensor_data)
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    print('Client disconnected')
-
-@socketio.on('request_data')
-def handle_data_request(data):
-    data_type = data.get('type', 'sensor')
-    if data_type == 'sensor':
-        emit('sensor_update', sensor_data)
-    elif data_type == 'weather':
-        weather = RealTimeWeatherService.get_comprehensive_weather()
-        emit('weather_update', weather)
-    elif data_type == 'market':
-        market = RealTimeMarketService.get_comprehensive_market_data()
-        emit('market_update', market)
-
-# ============================================================================
-# DEBUG ROUTES
-# ============================================================================
-
-@app.route('/debug/session')
-def debug_session():
-    if app.debug:
-        return jsonify({
-            'session': dict(session),
-            'logged_in': session.get('logged_in', False),
-            'user_id': session.get('user_id'),
-            'username': session.get('username')
-        })
-    return "Debug mode only", 403
-
-@app.route('/debug/create-user/<username>/<email>/<password>')
-def debug_create_user(username, email, password):
-    if app.debug:
-        try:
-            user_id = DatabaseManager.create_user(username, email, password)
-            if user_id:
-                return f"User created: {username} / {email} / {password} (ID: {user_id})"
-            else:
-                return "User already exists or creation failed"
-        except Exception as e:
-            return f"Error: {str(e)}"
-    return "Debug mode only", 403
-
-# ============================================================================
-# ERROR HANDLERS
-# ============================================================================
-
-@app.errorhandler(404)
-def not_found(error):
-    return render_template('404.html'), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return render_template('500.html'), 500
-
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
-def get_chatbot_response(message, language):
-    """Enhanced chatbot with context-aware responses"""
-    
-    responses = {
-        'en': {
-            'weather': f"Current weather: {get_current_weather_summary()}. Perfect conditions for most crops!",
-            'price': f"Latest market prices: {get_market_summary()}. Prices are generally stable.",
-            'sensor': f"Current soil conditions: {get_sensor_summary()}. Your soil health looks good!",
-            'fertilizer': "For optimal growth, use NPK fertilizer (10:26:26) for flowering crops, or urea for leafy vegetables. Always test soil first.",
-            'disease': "Please upload a clear image of the affected plant leaves for accurate disease diagnosis. Include the whole leaf in the photo.",
-            'irrigation': "Water early morning or evening. Check soil moisture at 2-3 inch depth. Most crops need 1-2 inches of water per week.",
-            'pest': "Common pests in West Bengal: aphids, thrips, bollworms. Use neem oil spray or integrated pest management techniques.",
-            'harvest': "Harvest timing depends on crop type. Look for visual cues: color change, firmness, size. I can provide specific guidance for your crop.",
-            'storage': "Proper storage prevents 30-40% post-harvest losses. Keep produce cool, dry, and well-ventilated.",
-            'organic': "Organic farming tips: Use compost, crop rotation, companion planting, beneficial insects, and organic fertilizers like vermicompost.",
-            'default': "I can help with crop advice, weather updates, market prices, disease diagnosis, and farming best practices. What specific information do you need?"
-        },
-        'hi': {
-            'weather': f"वर्तमान मौसम: {get_current_weather_summary()}। अधिकांश फसलों के लिए उपयुक्त स्थितियां!",
-            'price': f"नवीनतम बाजार भाव: {get_market_summary()}। कीमतें आम तौर पर स्थिर हैं।",
-            'sensor': f"वर्तमान मिट्टी की स्थिति: {get_sensor_summary()}। आपकी मिट्टी का स्वास्थ्य अच्छा है!",
-            'fertilizer': "अच्छी वृद्धि के लिए, फूल वाली फसलों के लिए NPK उर्वरक (10:26:26) या पत्तेदार सब्जियों के लिए यूरिया का उपयोग करें। हमेशा पहले मिट्टी की जांच करें।",
-            'disease': "सटीक रोग निदान के लिए प्रभावित पौधे की पत्तियों की स्पष्ट छवि अपलोड करें।",
-            'irrigation': "सुबह जल्दी या शाम को पानी दें। 2-3 इंच की गहराई पर मिट्टी की नमी जांचें।",
-            'pest': "पश्चिम बंगाल में आम कीट: एफिड्स, थ्रिप्स, बॉलवर्म। नीम तेल स्प्रे का उपयोग करें।",
-            'harvest': "कटाई का समय फसल के प्रकार पर निर्भर करता है। रंग, कठोरता, आकार जैसे संकेतों को देखें।",
-            'storage': "उचित भंडारण से 30-40% फसल के बाद के नुकसान को रोका जा सकता है।",
-            'organic': "जैविक खेती: कंपोस्ट, फसल चक्र, साथी रोपण, और वर्मीकम्पोस्ट का उपयोग करें।",
-            'default': "मैं फसल सलाह, मौसम अपडेट, बाजार भाव, रोग निदान में मदद कर सकता हूं। आपको कैसी जानकारी चाहिए?"
-        },
-        'bn': {
-            'weather': f"বর্তমান আবহাওয়া: {get_current_weather_summary()}। বেশিরভাগ ফসলের জন্য উপযুক্ত অবস্থা!",
-            'price': f"সর্বশেষ বাজার দর: {get_market_summary()}। দাম সাধারণত স্থিতিশীল।",
-            'sensor': f"বর্তমান মাটির অবস্থা: {get_sensor_summary()}। আপনার মাটির স্বাস্থ্য ভালো!",
-            'fertilizer': "ভালো বৃদ্ধির জন্য, ফুল ফসলের জন্য NPK সার (10:26:26) বা পাতা সবজির জন্য ইউরিয়া ব্যবহার করুন।",
-            'disease': "সঠিক রোগ নির্ণয়ের জন্য আক্রান্ত গাছের পাতার স্পষ্ট ছবি আপলোড করুন।",
-            'irrigation': "ভোরে বা সন্ধ্যায় পানি দিন। ২-৩ ইঞ্চি গভীরতায় মাটির আর্দ্রতা পরীক্ষা করুন।",
-            'pest': "পশ্চিমবঙ্গের সাধারণ পোকা: এফিড, থ্রিপস, বলওয়ার্ম। নিম তেল স্প্রে ব্যবহার করুন।",
-            'harvest': "ফসল কাটার সময় ফসলের ধরনের উপর নির্ভর করে। রং, কঠিনতা দেখুন।",
-            'storage': "সঠিক সংরক্ষণ ৩০-৪০% ফসল পরবর্তী ক্ষতি প্রতিরোধ করে।",
-            'organic': "জৈব চাষ: কম্পোস্ট, ফসল আবর্তন, সহচর রোপণ, কেঁচো কম্পোস্ট ব্যবহার করুন।",
-            'default': "আমি ফসল পরামর্শ, আবহাওয়া আপডেট, বাজার দর, রোগ নির্ণয়ে সাহায্য করতে পারি। কী তথ্য দরকার?"
-        }
-    }
-    
-    response_key = 'default'
-    keywords = {
-        'weather': ['weather', 'मौसम', 'আবহাওয়া', 'rain', 'बारिश', 'বৃষ্টি'],
-        'price': ['price', 'market', 'भाव', 'বাজার', 'cost', 'कीमत', 'দাম'],
-        'sensor': ['soil', 'ph', 'moisture', 'मिट्टी', 'মাটি'],
-        'fertilizer': ['fertilizer', 'उर्वरक', 'সার', 'npk', 'urea'],
-        'disease': ['disease', 'sick', 'রোগ', 'रोग', 'problem'],
-        'irrigation': ['water', 'irrigation', 'पानी', 'পানি'],
-        'pest': ['pest', 'insect', 'कीट', 'পোকা'],
-        'harvest': ['harvest', 'कटाई', 'ফসল কাটা'],
-        'storage': ['storage', 'store', 'ভন্ডারন', 'সংরক্ষণ'],
-        'organic': ['organic', 'जैविक', 'জৈব']
-    }
-    
-    for key, words in keywords.items():
-        if any(word in message for word in words):
-            response_key = key
-            break
-    
-    return responses.get(language, responses['en']).get(response_key, responses['en']['default'])
-
-def get_current_weather_summary():
-    try:
-        weather = RealTimeWeatherService.get_comprehensive_weather()
-        return f"{weather['temperature']}°C, {weather['description']}"
-    except:
-        return "25°C, Pleasant"
-
-def get_market_summary():
-    try:
-        market = RealTimeMarketService.get_comprehensive_market_data()
-        rice_price = market.get('rice', {}).get('price', 25)
-        return f"Rice ₹{rice_price}/kg"
-    except:
-        return "Rice ₹25/kg"
-
-def get_sensor_summary():
-    return f"pH {sensor_data['soil_ph']:.1f}, Moisture {sensor_data['soil_moisture']}%"
-
-# ============================================================================
-# MAIN EXECUTION
-# ============================================================================
-
-if __name__ == '__main__':
-    # Create necessary directories
-    os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
-    os.makedirs('models', exist_ok=True)
-    
-    # Initialize database
-    if not initialize_database():
-        print("WARNING: Database initialization failed!")
-    
-    # Load ML models
-    if plant_detector.load_models():
-        print("✓ Plant disease detection models loaded successfully")
-    else:
-        print("⚠ Models not found - using mock predictions for demo")
-    
-    # Start IoT simulation
-    iot_simulator.start_simulation()
-    
-    print("🌱 Krishi Sahyog Agricultural Advisory System Starting...")
-    print("📊 Real-time sensor simulation: ACTIVE")
-    print("🤖 AI Plant Disease Detection: READY")
-    print("🌤 Weather Integration: ACTIVE")
-    print("💰 Market Price Tracking: ACTIVE")
-    print("🗣 Multi-language Support: English, Hindi, Bengali")
-    print("🔧 Debug routes available: /debug/session, /debug/create-user")
-    print("📧 Test user: test@test.com / password: test123")
-    
-    # Run the application
-    socketio.run(
-        app, 
-        debug=True, 
-        host='127.0.0.1', 
-        port=5000,
-        allow_unsafe_werkzeug=True
-    )
+        socketio.run(app, debug=True, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)
