@@ -1,140 +1,197 @@
-"""
-utils.py - Utility functions and classes for Krishi Sahyog
-Image processing, database operations, weather, and crop analysis utilities
-"""
-
 import cv2
 import numpy as np
+import sqlite3
 import requests
-import logging
+import json
+import os
 from datetime import datetime, timedelta
 from PIL import Image
+import io
 import random
 from config import Config
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
 class ImageProcessor:
-    """Handles image processing for plant disease detection"""
-    
     @staticmethod
     def allowed_file(filename):
-        """Check if file extension is allowed"""
-        try:
-            if not filename or '.' not in filename:
-                return False
-            ext = filename.rsplit('.', 1)[1].lower()
-            return ext in Config.ALLOWED_EXTENSIONS
-        except Exception as e:
-            logger.error(f"Error checking file: {e}")
-            return False
+        return '.' in filename and \
+               filename.rsplit('.', 1)[1].lower() in Config.ALLOWED_EXTENSIONS
     
     @staticmethod
     def preprocess_for_ml(image_path, target_size=(224, 224)):
-        """Preprocess image for TensorFlow Lite model inference"""
         try:
-            if not image_path or not isinstance(image_path, str):
-                logger.error("Invalid image path provided")
-                return None
-            
             image = cv2.imread(image_path)
-            if image is None:
-                logger.error(f"Failed to read image from path: {image_path}")
-                return None
-            
-            # Convert BGR to RGB
+            if image is None: return None
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            
-            # Resize to target size
             image = cv2.resize(image, target_size)
-            
-            # Normalize to 0-1 range
             image = image.astype(np.float32) / 255.0
-            
-            # Add batch dimension
             image = np.expand_dims(image, axis=0)
-            
-            logger.debug(f"Image preprocessed successfully: shape {image.shape}")
             return image
-            
-        except cv2.error as e:
-            logger.error(f"OpenCV error during image preprocessing: {e}")
-            return None
         except Exception as e:
-            logger.error(f"Error preprocessing image: {e}")
             return None
     
     @staticmethod
     def enhance_image_quality(image_path):
-        """Enhance image quality using CLAHE"""
         try:
-            if not image_path or not isinstance(image_path, str):
-                logger.error("Invalid image path provided")
-                return image_path
-            
             image = cv2.imread(image_path)
-            if image is None:
-                logger.error(f"Failed to read image: {image_path}")
-                return image_path
-            
-            # Convert BGR to LAB color space
+            if image is None: return None
             lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
             l, a, b = cv2.split(lab)
-            
-            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
             clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
             l = clahe.apply(l)
-            
-            # Merge channels back
             enhanced = cv2.merge([l, a, b])
-            
-            # Convert back to BGR
             enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
-            
-            # Save enhanced image
             enhanced_path = image_path.replace('.', '_enhanced.')
             cv2.imwrite(enhanced_path, enhanced)
-            
-            logger.info(f"Image enhanced successfully: {enhanced_path}")
             return enhanced_path
-            
-        except cv2.error as e:
-            logger.error(f"OpenCV error during image enhancement: {e}")
-            return image_path
         except Exception as e:
-            logger.error(f"Error enhancing image: {e}")
             return image_path
 
-
-class WeatherUtils:
-    """Weather data retrieval and analysis"""
+class DatabaseUtils:
+    @staticmethod
+    def get_connection():
+        db_path = 'agricultural_data.db'
+        return sqlite3.connect(db_path)
     
     @staticmethod
-    def get_real_weather(lat, lon):
-        """Get weather from Open-Meteo API and Nominatim for location"""
-        try:
-            weather_url = "https://api.open-meteo.com/v1/forecast"
-            
-            params = {
-                'latitude': lat,
-                'longitude': lon,
-                'current': 'temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation,pressure_msl',
-                'daily': 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,uv_index_max',
-                'timezone': 'auto'
+    def create_tables():
+        conn = DatabaseUtils.get_connection()
+        cursor = conn.cursor()
+        
+        diagnoses_sql = '''
+            CREATE TABLE IF NOT EXISTS diagnoses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                image_path TEXT,
+                plant_type TEXT,
+                disease_name TEXT,
+                confidence REAL,
+                treatment TEXT,
+                severity TEXT,
+                user_location TEXT
+            )
+        '''
+        cursor.execute(diagnoses_sql)
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sensor_readings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                soil_ph REAL,
+                soil_moisture REAL,
+                soil_temperature REAL,
+                nitrogen REAL,
+                phosphorus REAL,
+                potassium REAL,
+                location TEXT DEFAULT 'West Bengal'
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS market_prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                crop_name TEXT,
+                price_per_kg REAL,
+                market_location TEXT,
+                price_trend TEXT,
+                quality_grade TEXT DEFAULT 'A'
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_interactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                interaction_type TEXT,
+                data TEXT,
+                language TEXT DEFAULT 'en'
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS weather_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                location TEXT,
+                temperature REAL,
+                humidity REAL,
+                description TEXT,
+                wind_speed REAL,
+                pressure REAL,
+                rainfall REAL DEFAULT 0
+            )
+        ''')
+        
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+    
+        
+        conn.commit()
+        conn.close()
+    
+    @staticmethod
+    def get_recent_diagnoses(limit=10):
+        conn = DatabaseUtils.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT disease_name, confidence, timestamp, severity, plant_type
+            FROM diagnoses 
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        ''', (limit,))
+        results = cursor.fetchall()
+        conn.close()
+        
+        return [
+            {
+                'disease_name': row[0],
+                'confidence': row[1],
+                'timestamp': row[2],
+                'severity': row[3] or 'Unknown',
+                'plant_type': row[4] or 'Unknown'
             }
-            
-            logger.info(f"Fetching weather for lat={lat}, lon={lon}")
+            for row in results
+        ]
+
+class WeatherUtils:
+    @staticmethod
+    def get_real_weather(lat, lon):
+        """Get weather from the free Open-Meteo API and location from Nominatim"""
+        weather_url = f"https://api.open-meteo.com/v1/forecast"
+        # Requesting comprehensive weather variables
+        params = {
+            'latitude': lat,
+            'longitude': lon,
+            'current': 'temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation,pressure_msl',
+            'daily': 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,uv_index_max',
+            'timezone': 'auto'
+        }
+        
+        try:
             weather_response = requests.get(weather_url, params=params, timeout=10)
             weather_response.raise_for_status()
             weather_data = weather_response.json()
             
-            # Get location name from Nominatim
-            location = WeatherUtils._get_location_name(lat, lon)
+            location = "Your Location"
+            try:
+                location_url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&addressdetails=1"
+                location_response = requests.get(location_url, headers={'User-Agent': 'KrishiMitra-App'}, timeout=5)
+                location_response.raise_for_status()
+                location_data = location_response.json()
+                address = location_data.get('address', {})
+                location = address.get('city') or address.get('town') or address.get('county') or address.get('state') or 'Your Location'
+            except Exception:
+                pass 
             
-            # Weather code mapping
             weather_codes = {
                 0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
                 45: 'Fog', 48: 'Depositing rime fog', 
@@ -143,76 +200,41 @@ class WeatherUtils:
                 80: 'Slight rain showers', 81: 'Moderate rain showers', 82: 'Violent rain showers',
                 95: 'Thunderstorm', 96: 'Thunderstorm with hail', 99: 'Thunderstorm with heavy hail'
             }
-            
             icon_map = {
                 'Clear sky': '01d', 'Partly cloudy': '02d', 'Overcast': '04d', 'Rain': '09d',
                 'Drizzle': '09d', 'Thunderstorm': '11d', 'Fog': '50d', 'Snow': '13d'
             }
-            
+
             current = weather_data.get('current', {})
             daily = weather_data.get('daily', {})
             
             description = weather_codes.get(current.get('weather_code', 0), 'Unknown')
-            
+
             weather_result = {
-                'temperature': round(current.get('temperature_2m', 0), 1),
+                'temperature': current.get('temperature_2m', 0),
                 'humidity': current.get('relative_humidity_2m', 0),
                 'description': description,
-                'wind_speed': round(current.get('wind_speed_10m', 0), 1),
+                'wind_speed': current.get('wind_speed_10m', 0),
                 'pressure': current.get('pressure_msl', 1013),
                 'location': location,
                 'icon': icon_map.get(description, '01d'),
-                'uv_index': round(daily.get('uv_index_max', [1])[0], 1) if daily.get('uv_index_max') else 1,
-                'rainfall': round(daily.get('precipitation_sum', [0])[0], 1) if daily.get('precipitation_sum') else 0,
-                'visibility': round(random.uniform(8, 15), 1),
+                'uv_index': daily.get('uv_index_max', [1])[0] if daily.get('uv_index_max') else 1,
+                'rainfall': daily.get('precipitation_sum', [0])[0] if daily.get('precipitation_sum') else 0,
+                'visibility': random.uniform(8, 15), 
                 'alerts': WeatherUtils._generate_agricultural_alerts_openmeteo(weather_data),
                 'forecast': WeatherUtils._process_forecast_openmeteo(weather_data)
             }
             
-            logger.info("Weather data fetched successfully")
             return weather_result
-            
-        except requests.exceptions.Timeout:
-            logger.error("Weather API request timed out")
-            return WeatherUtils._get_mock_weather()
         except requests.exceptions.RequestException as e:
-            logger.error(f"Weather API error: {e}")
             return WeatherUtils._get_mock_weather()
-        except Exception as e:
-            logger.error(f"Unexpected error in weather retrieval: {e}")
-            return WeatherUtils._get_mock_weather()
-    
-    @staticmethod
-    def _get_location_name(lat, lon):
-        """Get location name from coordinates using Nominatim"""
-        try:
-            location_url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&addressdetails=1"
-            location_response = requests.get(
-                location_url,
-                headers={'User-Agent': 'KrishiSahyog-App'},
-                timeout=5
-            )
-            location_response.raise_for_status()
-            location_data = location_response.json()
-            
-            address = location_data.get('address', {})
-            location = (address.get('city') or address.get('town') or 
-                       address.get('county') or address.get('state') or 'Your Location')
-            
-            return location
-        except Exception as e:
-            logger.warning(f"Error fetching location name: {e}")
-            return Config.DEFAULT_LOCATION
-    
+
     @staticmethod
     def _get_mock_weather():
-        """Generate mock weather data"""
         month = datetime.now().month
         season_data = WeatherUtils._get_seasonal_data(month)
-        
         base_temp = season_data['base_temp'] + random.uniform(-3, 3)
         humidity = max(40, min(95, season_data['base_humidity'] + random.randint(-15, 15)))
-        
         return {
             'temperature': round(base_temp, 1),
             'humidity': int(humidity),
@@ -230,115 +252,90 @@ class WeatherUtils:
     
     @staticmethod
     def _get_seasonal_data(month):
-        """Get seasonal weather data"""
         if month in [12, 1, 2]:
-            return {
-                'base_temp': 20, 'base_humidity': 65,
-                'descriptions': ['Clear Sky', 'Sunny', 'Partly Cloudy', 'Cool'],
-                'max_rainfall': 2, 'season': 'Winter'
-            }
+            return {'base_temp': 20, 'base_humidity': 65, 'descriptions': ['Clear Sky', 'Sunny', 'Partly Cloudy', 'Cool'], 'max_rainfall': 2, 'season': 'Winter'}
         elif month in [3, 4, 5]:
-            return {
-                'base_temp': 32, 'base_humidity': 70,
-                'descriptions': ['Hot', 'Sunny', 'Partly Cloudy', 'Warm'],
-                'max_rainfall': 5, 'season': 'Summer'
-            }
+            return {'base_temp': 32, 'base_humidity': 70, 'descriptions': ['Hot', 'Sunny', 'Partly Cloudy', 'Warm'], 'max_rainfall': 5, 'season': 'Summer'}
         elif month in [6, 7, 8, 9]:
-            return {
-                'base_temp': 28, 'base_humidity': 85,
-                'descriptions': ['Heavy Rain', 'Moderate Rain', 'Light Rain', 'Cloudy', 'Overcast'],
-                'max_rainfall': 25, 'season': 'Monsoon'
-            }
+            return {'base_temp': 28, 'base_humidity': 85, 'descriptions': ['Heavy Rain', 'Moderate Rain', 'Light Rain', 'Cloudy', 'Overcast'], 'max_rainfall': 25, 'season': 'Monsoon'}
         else:
-            return {
-                'base_temp': 26, 'base_humidity': 75,
-                'descriptions': ['Pleasant', 'Partly Cloudy', 'Clear Sky', 'Mild'],
-                'max_rainfall': 8, 'season': 'Post-Monsoon'
-            }
+            return {'base_temp': 26, 'base_humidity': 75, 'descriptions': ['Pleasant', 'Partly Cloudy', 'Clear Sky', 'Mild'], 'max_rainfall': 8, 'season': 'Post-Monsoon'}
     
     @staticmethod
     def _generate_agricultural_alerts_openmeteo(weather_data):
-        """Generate agricultural alerts based on Open-Meteo weather data"""
         alerts = []
-        try:
-            current_temp = weather_data.get('current', {}).get('temperature_2m', 0)
-            current_humidity = weather_data.get('current', {}).get('relative_humidity_2m', 0)
-            current_precipitation = weather_data.get('current', {}).get('precipitation', 0)
-            
-            if current_temp > 35:
-                alerts.append("High temperature alert - Provide shade to crops")
-            if current_temp < 10:
-                alerts.append("Low temperature alert - Protect sensitive crops")
-            if current_humidity > 85:
-                alerts.append("High humidity - Monitor for fungal diseases")
-            if current_precipitation > 5:
-                alerts.append("Heavy rainfall detected - Ensure proper drainage")
-        except Exception as e:
-            logger.error(f"Error generating agricultural alerts: {e}")
-        
+        current_temp = weather_data['current'].get('temperature_2m', 0)
+        current_humidity = weather_data['current'].get('relative_humidity_2m', 0)
+        current_precipitation = weather_data['current'].get('precipitation', 0)
+        if current_temp > 35: alerts.append("High temperature alert - Provide shade to crops")
+        if current_temp < 10: alerts.append("Low temperature alert - Protect sensitive crops")
+        if current_humidity > 85: alerts.append("High humidity - Monitor for fungal diseases")
+        if current_precipitation > 5: alerts.append("Heavy rainfall detected - Ensure proper drainage")
+        return alerts
+
+    @staticmethod
+    def _generate_agricultural_alerts(weather_data):
+        alerts = []
+        temp = weather_data['main']['temp']
+        humidity = weather_data['main']['humidity']
+        if temp > 35: alerts.append("High temperature alert - Provide shade to crops")
+        if temp < 10: alerts.append("Low temperature alert - Protect sensitive crops")
+        if humidity > 85: alerts.append("High humidity - Monitor for fungal diseases")
+        if humidity < 40: alerts.append("Low humidity - Increase irrigation")
         return alerts
     
     @staticmethod
     def _generate_mock_alerts(season_data):
-        """Generate mock agricultural alerts"""
         alerts = []
-        try:
-            if season_data['season'] == 'Monsoon':
-                alerts.append("Heavy rainfall expected - Ensure proper drainage")
-                alerts.append("High humidity - Monitor crops for disease")
-            elif season_data['season'] == 'Summer':
-                alerts.append("High temperature - Increase irrigation frequency")
-        except Exception as e:
-            logger.error(f"Error generating mock alerts: {e}")
-        
+        if season_data['season'] == 'Monsoon':
+            alerts.append("Heavy rainfall expected - Ensure proper drainage")
+            alerts.append("High humidity - Monitor crops for disease")
+        elif season_data['season'] == 'Summer':
+            alerts.append("High temperature - Increase irrigation frequency")
         return alerts
     
     @staticmethod
     def _generate_mock_forecast():
-        """Generate mock weather forecast"""
         forecast = []
-        try:
-            for i in range(5):
-                forecast.append({
-                    'date': (datetime.now() + timedelta(days=i)).date().strftime('%Y-%m-%d'),
-                    'temp_max': round(random.uniform(25, 35), 1),
-                    'temp_min': round(random.uniform(18, 25), 1),
-                    'humidity': random.randint(60, 90),
-                    'description': random.choice(['Sunny', 'Cloudy', 'Rainy', 'Partly Cloudy'])
-                })
-        except Exception as e:
-            logger.error(f"Error generating mock forecast: {e}")
-        
+        for i in range(5):
+            forecast.append({
+                'date': (datetime.now().date().strftime('%Y-%m-%d')),
+                'temp_max': round(random.uniform(25, 35), 1),
+                'temp_min': round(random.uniform(18, 25), 1),
+                'humidity': random.randint(60, 90),
+                'description': random.choice(['Sunny', 'Cloudy', 'Rainy', 'Partly Cloudy'])
+            })
         return forecast
-    
+
     @staticmethod
     def _process_forecast_openmeteo(data):
-        """Process forecast from Open-Meteo API"""
         processed = []
-        try:
-            if 'daily' in data:
-                daily_data = data['daily']
-                times = daily_data.get('time', [])
-                temps_max = daily_data.get('temperature_2m_max', [])
-                temps_min = daily_data.get('temperature_2m_min', [])
-                
-                for i in range(min(5, len(times))):
-                    processed.append({
-                        'date': times[i],
-                        'temp_max': round(temps_max[i], 1) if i < len(temps_max) else 0,
-                        'temp_min': round(temps_min[i], 1) if i < len(temps_min) else 0,
-                        'humidity': random.randint(60, 90),
-                        'description': 'Daily forecast'
-                    })
-        except Exception as e:
-            logger.error(f"Error processing forecast: {e}")
-        
+        if 'daily' in data:
+            daily_data = data['daily']
+            for i in range(min(5, len(daily_data['time']))):
+                processed.append({
+                    'date': daily_data['time'][i],
+                    'temp_max': daily_data['temperature_2m_max'][i],
+                    'temp_min': daily_data['temperature_2m_min'][i],
+                    'humidity': random.randint(60, 90), 
+                    'description': 'Daily forecast'
+                })
+        return processed
+    
+    @staticmethod
+    def _process_forecast(forecast_data):
+        processed = []
+        for item in forecast_data['list'][:5]:
+            processed.append({
+                'date': item['dt_txt'][:10],
+                'temp_max': round(item['main']['temp_max'], 1),
+                'temp_min': round(item['main']['temp_min'], 1),
+                'humidity': item['main']['humidity'],
+                'description': item['weather'][0]['description'].title()
+            })
         return processed
 
-
 class CropDataAnalyzer:
-    """Analyzes soil conditions and provides crop recommendations"""
-    
     @staticmethod
     def analyze_soil_conditions(ph, moisture, temperature, npk=None):
         """Analyze soil conditions and provide recommendations"""
@@ -349,221 +346,121 @@ class CropDataAnalyzer:
             'warnings': []
         }
         
-        try:
-            # pH Analysis
-            if ph < 5.5:
-                analysis['warnings'].append('Soil is too acidic')
-                analysis['recommendations'].append('Add lime to increase pH')
-            elif ph > 8.0:
-                analysis['warnings'].append('Soil is too alkaline')
-                analysis['recommendations'].append('Add organic matter to lower pH')
-            
-            # Moisture Analysis
-            if moisture < 30:
-                analysis['warnings'].append('Low soil moisture')
-                analysis['recommendations'].append('Increase irrigation frequency')
-            elif moisture > 85:
-                analysis['warnings'].append('Excessive soil moisture')
-                analysis['recommendations'].append('Improve drainage')
-            
-            # Temperature Analysis
-            if temperature < 15:
-                analysis['warnings'].append('Low soil temperature')
-                analysis['recommendations'].append('Consider season-appropriate crops')
-            elif temperature > 35:
-                analysis['warnings'].append('High soil temperature')
-                analysis['recommendations'].append('Provide shade or mulching')
-            
-            # Crop Recommendations based on soil conditions
-            if 5.5 <= ph <= 7.0 and 50 <= moisture <= 80:
-                analysis['suitable_crops'].extend(['Rice', 'Wheat', 'Potato'])
-            if 6.0 <= ph <= 7.5 and 40 <= moisture <= 70:
-                analysis['suitable_crops'].extend(['Tomato', 'Corn', 'Soybean'])
-            if 5.8 <= ph <= 6.8 and 45 <= moisture <= 75:
-                analysis['suitable_crops'].extend(['Onion', 'Cabbage'])
-            
-            # Remove duplicates
-            analysis['suitable_crops'] = list(set(analysis['suitable_crops']))
-            
-            # Overall health assessment
-            warning_count = len(analysis['warnings'])
-            if warning_count == 0:
-                analysis['overall_health'] = 'Excellent'
-            elif warning_count <= 2:
-                analysis['overall_health'] = 'Good'
-            elif warning_count <= 4:
-                analysis['overall_health'] = 'Fair'
-            else:
-                analysis['overall_health'] = 'Poor'
-            
-            logger.info(f"Soil analysis completed: {analysis['overall_health']}")
-            
-        except Exception as e:
-            logger.error(f"Error analyzing soil conditions: {e}")
-            analysis['warnings'].append('Error during analysis')
+        # pH Analysis
+        if ph < 5.5:
+            analysis['warnings'].append('Soil is too acidic')
+            analysis['recommendations'].append('Add lime to increase pH')
+        elif ph > 8.0:
+            analysis['warnings'].append('Soil is too alkaline')
+            analysis['recommendations'].append('Add organic matter to lower pH')
+        
+        # Moisture Analysis
+        if moisture < 30:
+            analysis['warnings'].append('Low soil moisture')
+            analysis['recommendations'].append('Increase irrigation frequency')
+        elif moisture > 85:
+            analysis['warnings'].append('Excessive soil moisture')
+            analysis['recommendations'].append('Improve drainage')
+        
+        # Temperature Analysis
+        if temperature < 15:
+            analysis['warnings'].append('Low soil temperature')
+            analysis['recommendations'].append('Consider season-appropriate crops')
+        elif temperature > 35:
+            analysis['warnings'].append('High soil temperature')
+            analysis['recommendations'].append('Provide shade or mulching')
+        
+        # Crop Recommendations
+        if 5.5 <= ph <= 7.0 and 50 <= moisture <= 80:
+            analysis['suitable_crops'].extend(['Rice', 'Wheat', 'Potato'])
+        if 6.0 <= ph <= 7.5 and 40 <= moisture <= 70:
+            analysis['suitable_crops'].extend(['Tomato', 'Corn', 'Soybean'])
+        if 5.8 <= ph <= 6.8 and 45 <= moisture <= 75:
+            analysis['suitable_crops'].extend(['Onion', 'Cabbage'])
+        
+        # Overall health assessment
+        warning_count = len(analysis['warnings'])
+        if warning_count == 0:
+            analysis['overall_health'] = 'Excellent'
+        elif warning_count <= 2:
+            analysis['overall_health'] = 'Good'
+        elif warning_count <= 4:
+            analysis['overall_health'] = 'Fair'
+        else:
+            analysis['overall_health'] = 'Poor'
         
         return analysis
     
     @staticmethod
     def get_seasonal_recommendations(month=None):
         """Get seasonal crop recommendations"""
-        try:
-            if month is None:
-                month = datetime.now().month
-            
-            if not isinstance(month, int) or month < 1 or month > 12:
-                month = datetime.now().month
-            
-            seasons = {
-                'Kharif': [4, 5, 6, 7, 8, 9],
-                'Rabi': [10, 11, 12, 1, 2, 3],
+        if month is None:
+            month = datetime.now().month
+        
+        seasons = {
+            'Kharif': [4, 5, 6, 7, 8, 9],  # April to September
+            'Rabi': [10, 11, 12, 1, 2, 3],  # October to March
+        }
+        
+        current_season = 'Kharif' if month in seasons['Kharif'] else 'Rabi'
+        
+        recommendations = {
+            'Kharif': {
+                'crops': ['Rice', 'Cotton', 'Corn', 'Jute', 'Sugarcane'],
+                'activities': [
+                    'Prepare fields for monsoon crops',
+                    'Ensure proper drainage systems',
+                    'Stock up on fertilizers',
+                    'Monitor weather for planting time'
+                ]
+            },
+            'Rabi': {
+                'crops': ['Wheat', 'Barley', 'Mustard', 'Peas', 'Potato'],
+                'activities': [
+                    'Prepare winter crop fields',
+                    'Plan irrigation schedule',
+                    'Apply base fertilizers',
+                    'Select disease-resistant varieties'
+                ]
             }
-            
-            current_season = 'Kharif' if month in seasons['Kharif'] else 'Rabi'
-            
-            recommendations = {
-                'Kharif': {
-                    'crops': ['Rice', 'Cotton', 'Corn', 'Jute', 'Sugarcane'],
-                    'activities': [
-                        'Prepare fields for monsoon crops',
-                        'Ensure proper drainage systems',
-                        'Stock up on fertilizers',
-                        'Monitor weather for planting time'
-                    ]
-                },
-                'Rabi': {
-                    'crops': ['Wheat', 'Barley', 'Mustard', 'Peas', 'Potato'],
-                    'activities': [
-                        'Prepare winter crop fields',
-                        'Plan irrigation schedule',
-                        'Apply base fertilizers',
-                        'Select disease-resistant varieties'
-                    ]
-                }
-            }
-            
-            result = {
-                'current_season': current_season,
-                'recommended_crops': recommendations[current_season]['crops'],
-                'seasonal_activities': recommendations[current_season]['activities']
-            }
-            
-            logger.info(f"Seasonal recommendations generated: {current_season}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error generating seasonal recommendations: {e}")
-            return {
-                'current_season': 'Unknown',
-                'recommended_crops': [],
-                'seasonal_activities': []
-            }
-
+        }
+        
+        return {
+            'current_season': current_season,
+            'recommended_crops': recommendations[current_season]['crops'],
+            'seasonal_activities': recommendations[current_season]['activities']
+        }
 
 class TranslationUtils:
-    """Provides translations for the application"""
-    
     @staticmethod
     def get_translations():
-        """Return comprehensive translations for all supported languages"""
+        """Return comprehensive translations"""
         return {
             "en": {
-                "app-name": "Krishi Sahyog",
-                "nav-logout": "Logout",
+                "app-name": "Krishi Shayog",
+                "nav-logout":"Logout",
                 "nav-home": "Home",
-                "nav-diagnosis": "Plant Diagnosis",
+                "nav-diagnosis":"Plant Diagnosis",
                 "nav-features": "Features",
                 "nav-advisory": "Advisory",
                 "nav-contact": "Contact",
-                "nav-chatbot": "Smart Assistant",
-                "nav-soil": "Soil Analysis",
+                "nav-chatbot":"Smart Assistant",
+                "nav-soil":"Soil Analysis",
                 "nav-dashboard": "Dashboard",
                 "hero-title": "Smart Agricultural Advisory System",
                 "hero-subtitle": "Empowering farmers with AI-powered insights, real-time data, and personalized recommendations",
+                "hero-title-features": "Explore Our Smart Features",
+                "hero-subtitle-features": "Providing comprehensive solutions for modern agriculture with cutting-edge technology.",
+                "hero-title-advisory": "Personalized Farming Advisory",
+                "hero-subtitle-advisory": "Get crop-specific recommendations based on soil health, weather, and more.",
+                "hero-title-contact": "Get in Touch with KrishiMitra",
+                "hero-subtitle-contact": "We'd love to hear from you. Reach out to our team for support or inquiries.",
+                "hero-title-dashboard": "Your Farm Dashboard",
+                "hero-subtitle-dashboard": "A quick overview of your farm's health and market insights.",
                 "feature-plant-health": "Plant Health Diagnosis",
                 "feature-plant-health-desc": "Upload plant images for AI-powered disease and pest detection using advanced computer vision.",
                 "upload-plant-image": "Click to upload plant image",
                 "btn-diagnose": "Diagnose Plant",
-                "feature-soil-monitoring": "মাটির পর্যবেক্ষণ",
-                "feature-soil-monitoring-desc": "IoT সেন্সরের মাধ্যমে pH, আর্দ্রতা এবং তাপমাত্রার রিয়েল-টাইম পর্যবেক্ষণ।",
-                "sensor-ph": "pH স্তর",
-                "sensor-moisture": "আর্দ্রতা",
-                "sensor-temperature": "তাপমাত্রা",
-                "btn-refresh": "ডেটা রিফ্রেশ করুন",
-                "feature-weather": "আবহাওয়ার তথ্য",
-                "feature-weather-desc": "স্থানীয় আবহাওয়ার পূর্বাভাস এবং কৃষি সতর্কতা।",
-                "btn-update-weather": "আবহাওয়া আপডেট করুন",
-                "feature-market-prices": "বাজার মূল্য",
-                "feature-market-prices-desc": "ফসলের রিয়েল-টাইম দাম এবং প্রবণতা।",
-                "btn-update-prices": "মূল্য আপডেট করুন",
-                "feature-crop-advisory": "ফসল পরামর্শ",
-                "feature-crop-advisory-desc": "আপনার কৃষিক্ষেত্রের শর্ত অনুযায়ী ব্যক্তিগত পরামর্শ পান।",
-                "label-crop-type": "ফসলের ধরন:",
-                "label-farm-size": "ক্ষেত্রের আকার (একর):",
-                "btn-get-advice": "পরামর্শ পান",
-                "feature-ai-assistant": "AI সহকারী",
-                "feature-ai-assistant-desc": "তাৎক্ষণিক কৃষি পরামর্শ এবং সহায়তার জন্য চ্যাট করুন।",
-                "btn-chat": "চ্যাট শুরু করুন",
-                "btn-voice": "ভয়েস সহকারী",
-                "results-title": "বিশ্লেষণের ফলাফল",
-                "chat-title": "কৃষিমিত্র সহকারী",
-                "chat-welcome": "স্বাগতম! আমি কিভাবে আপনার সাহায্য করতে পারি?",
-                "crop-rice": "ধান",
-                "crop-wheat": "গম",
-                "crop-potato": "আলু",
-                "crop-tomato": "টমেটো",
-                "crop-onion": "পেঁয়াজ",
-                "crop-corn": "ভুট্টা",
-                "crop-soybean": "সয়াবিন",
-                "contact-name": "নাম",
-                "contact-email": "ইমেইল",
-                "contact-subject": "বিষয়",
-                "contact-message": "বার্তা",
-                "contact-submit": "বার্তা পাঠান",
-                "card-title-sensor": "লাইভ সেন্সর ডেটা",
-                "card-desc-sensor": "আপনার IoT সেন্সর থেকে রিয়েল-টাইম রিডিং।",
-                "card-title-diagnoses": "সাম্প্রতিক গাছের নির্ণয়",
-                "card-desc-diagnoses": "AI-চালিত রোগ শনাক্তকরণের ইতিহাস।",
-                "card-title-market": "বর্তমান বাজার মূল্য",
-                "card-desc-market": "স্থানীয় বাজার থেকে আপ-টু-ডেট ফসলের দাম।",
-                "btn-fetch-diagnoses": "নির্ণয় আনুন",
-                "diagnoses-placeholder": "কোনো সাম্প্রতিক নির্ণয় উপলব্ধ নেই।",
-                "weather-location": "অবস্থান",
-                "soil-analysis": "মাটি বিশ্লেষণ",
-                "crop-recommendations": "ফসল সুপারিশ",
-                "seasonal-advice": "মৌসুমি পরামর্শ",
-                "market-trends": "বাজার প্রবণতা",
-                "success": "সফল",
-                "error": "ত্রুটি",
-                "loading": "লোড হচ্ছে...",
-                "no-data": "কোনো ডেটা উপলব্ধ নেই",
-                "try-again": "আবার চেষ্টা করুন"
-            }
-        }
-    
-    @staticmethod
-    class TranslationUtils:
-    @staticmethod
-    def get_translations():
-        """Returns the full dictionary of translations for the app"""
-        return {
-            "en": {
-                "app-name": "Krishi Sahyog",
-                "nav-home": "Home",
-                "nav-dashboard": "Dashboard",
-                "nav-diagnosis": "Plant Diagnosis",
-                "nav-soil": "Soil Analysis",
-                "nav-chatbot": "Smart Assistant",
-                "nav-features": "Features",
-                "nav-advisory": "Advisory",
-                "nav-contact": "Contact",
-                "nav-logout": "Logout",
-                "hero-title": "Smart Agricultural Advisory System",
-                "hero-subtitle": "Empowering farmers with AI, data, and personalized advice",
-                "feature-plant-health": "Plant Health Diagnosis",
-                "feature-plant-health-desc": "Upload images of plants to identify diseases and pests.",
-                "upload-plant-image": "Upload Plant Image",
-                "btn-diagnose": "Diagnose",
                 "feature-soil-monitoring": "Soil Monitoring",
                 "feature-soil-monitoring-desc": "Real-time soil pH, moisture, and temperature monitoring through IoT sensors.",
                 "sensor-ph": "pH Level",
@@ -586,7 +483,7 @@ class TranslationUtils:
                 "btn-chat": "Start Chat",
                 "btn-voice": "Voice Assistant",
                 "results-title": "Analysis Results",
-                "chat-title": "Krishi Sahyog Assistant",
+                "chat-title": "KrishiMitra Assistant",
                 "chat-welcome": "Welcome! How can I help you today?",
                 "crop-rice": "Rice",
                 "crop-wheat": "Wheat",
@@ -620,18 +517,26 @@ class TranslationUtils:
                 "try-again": "Try Again"
             },
             "hi": {
-                "app-name": "कृषि सहायोग",
-                "nav-logout": "लॉग आउट",
+                "app-name": "कृषि सहियोग",
+                "nav-logout":"लॉग आउट",
                 "nav-home": "होम",
-                "nav-chatbot": "स्मार्ट सहायक",
-                "nav-diagnosis": "पादप रोग निदान",
+                "nav-chatbot":"स्मार्ट सहाय",
+                "nav-diagnosis":"पादप रोग निदान",
                 "nav-features": "विशेषताएं",
-                "nav-soil": "मृदा विश्लेषण",
+                "nav-soil":"मृदा विश्लेषण",
                 "nav-advisory": "सलाह",
                 "nav-contact": "संपर्क",
                 "nav-dashboard": "डैशबोर्ड",
                 "hero-title": "स्मार्ट कृषि परामर्श प्रणाली",
                 "hero-subtitle": "AI, डेटा और व्यक्तिगत सलाह से किसानों को सशक्त बनाना",
+                "hero-title-features": "हमारी स्मार्ट विशेषताएं खोजें",
+                "hero-subtitle-features": "अत्याधुनिक तकनीक के साथ आधुनिक कृषि के लिए व्यापक समाधान प्रदान करना।",
+                "hero-title-advisory": "व्यक्तिगत कृषि परामर्श",
+                "hero-subtitle-advisory": "मिट्टी के स्वास्थ्य, मौसम और अन्य के आधार पर फसल-विशिष्ट सिफारिशें प्राप्त करें।",
+                "hero-title-contact": "कृषिमित्र से संपर्क करें",
+                "hero-subtitle-contact": "हमें आपसे सुनकर खुशी होगी। समर्थन या पूछताछ के लिए हमारी टीम से संपर्क करें।",
+                "hero-title-dashboard": "आपका फार्म डैशबोर्ड",
+                "hero-subtitle-dashboard": "आपके खेत के स्वास्थ्य और बाजार की जानकारी का एक त्वरित अवलोकन।",
                 "feature-plant-health": "पौधों का स्वास्थ्य निदान",
                 "feature-plant-health-desc": "रोग और कीट पहचान के लिए पौधों की छवियां अपलोड करें।",
                 "upload-plant-image": "पौधे की छवि अपलोड करें",
@@ -658,7 +563,7 @@ class TranslationUtils:
                 "btn-chat": "चैट शुरू करें",
                 "btn-voice": "वॉइस असिस्टेंट",
                 "results-title": "विश्लेषण परिणाम",
-                "chat-title": "कृषि सहायोग सहायक",
+                "chat-title": "कृषिमित्र सहायक",
                 "chat-welcome": "स्वागत है! मैं आपकी कैसे मदद कर सकता हूं?",
                 "crop-rice": "चावल",
                 "crop-wheat": "गेहूं",
@@ -692,18 +597,26 @@ class TranslationUtils:
                 "try-again": "फिर कोशिश करें"
             },
             "bn": {
+                "nav-diagnosis":" উদ্ভিদ নির্ণয়",
+                "nav-logout":"লগআউট",
                 "app-name": "কৃষিমিত্র",
-                "nav-diagnosis": "উদ্ভিদ নির্ণয়",
-                "nav-logout": "লগআউট",
                 "nav-home": "হোম",
-                "nav-soil": "মাটি বিশ্লেষণ",
-                "nav-chatbot": "স্মার্ট সহকারী",
+                "nav-soil":"মাটি বিশ্লেষণ",
+                "nav-chatbot":"স্মার্ট সহকারী",
                 "nav-features": "বৈশিষ্ট্য",
                 "nav-advisory": "পরামর্শ",
                 "nav-contact": "যোগাযোগ",
                 "nav-dashboard": "ড্যাশবোর্ড",
                 "hero-title": "স্মার্ট কৃষি পরামর্শ ব্যবস্থা",
                 "hero-subtitle": "AI, তথ্য এবং ব্যক্তিগত পরামর্শের মাধ্যমে কৃষকদের ক্ষমতায়ন",
+                "hero-title-features": "আমাদের স্মার্ট বৈশিষ্ট্যগুলি অন্বেষণ করুন",
+                "hero-subtitle-features": "সর্বাধুনিক প্রযুক্তির মাধ্যমে আধুনিক কৃষির জন্য ব্যাপক সমাধান প্রদান করা।",
+                "hero-title-advisory": "ব্যক্তিগত কৃষি পরামর্শ",
+                "hero-subtitle-advisory": "মাটির স্বাস্থ্য, আবহাওয়া এবং আরও অনেক কিছুর উপর ভিত্তি করে ফসল-নির্দিষ্ট সুপারিশ পান।",
+                "hero-title-contact": "কৃষিমিত্রের সাথে যোগাযোগ করুন",
+                "hero-subtitle-contact": "আমরা আপনার কাছ থেকে শুনে খুশি হব। সমর্থন বা অনুসন্ধানের জন্য আমাদের দলের সাথে যোগাযোগ করুন।",
+                "hero-title-dashboard": "আপনার ফার্ম ড্যাশবোর্ড",
+                "hero-subtitle-dashboard": "আপনার ক্ষেত্রের স্বাস্থ্য এবং বাজারের তথ্যের একটি দ্রুত পর্যবেক্ষণ।",
                 "feature-plant-health": "গাছের স্বাস্থ্য নির্ণয়",
                 "feature-plant-health-desc": "রোগ এবং কীট শনাক্তকরণের জন্য গাছের ছবি আপলোড করুন।",
                 "upload-plant-image": "গাছের ছবি আপলোড করুন",
@@ -764,15 +677,3 @@ class TranslationUtils:
                 "try-again": "আবার চেষ্টা করুন"
             }
         }
-
-    @staticmethod
-    def get_translation(lang, key):
-        """Get a specific translation by language and key"""
-        try:
-            translations = TranslationUtils.get_translations()
-            lang_code = lang if lang in translations else 'en'
-            return translations[lang_code].get(key, f"[{key}]")
-        except Exception as e:
-            # Note: Ensure 'logging' is imported at the top of utils.py
-            print(f"Error getting translation: {e}")
-            return f"[{key}]"
