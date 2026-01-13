@@ -542,15 +542,29 @@ class TranslationUtils:
         }
     
     @staticmethod
-    def get_translation(lang, key):
-        """Get a specific translation by language and key"""
-        try:
-            translations = TranslationUtils.get_translations()
-            lang_code = lang if lang in translations else 'en'
-            return translations[lang_code].get(key, f"[{key}]")
-        except Exception as e:
-            logger.error(f"Error getting translation: {e}")
-            return f"[{key}]" "Soil Monitoring",
+    class TranslationUtils:
+    @staticmethod
+    def get_translations():
+        """Returns the full dictionary of translations for the app"""
+        return {
+            "en": {
+                "app-name": "Krishi Sahyog",
+                "nav-home": "Home",
+                "nav-dashboard": "Dashboard",
+                "nav-diagnosis": "Plant Diagnosis",
+                "nav-soil": "Soil Analysis",
+                "nav-chatbot": "Smart Assistant",
+                "nav-features": "Features",
+                "nav-advisory": "Advisory",
+                "nav-contact": "Contact",
+                "nav-logout": "Logout",
+                "hero-title": "Smart Agricultural Advisory System",
+                "hero-subtitle": "Empowering farmers with AI, data, and personalized advice",
+                "feature-plant-health": "Plant Health Diagnosis",
+                "feature-plant-health-desc": "Upload images of plants to identify diseases and pests.",
+                "upload-plant-image": "Upload Plant Image",
+                "btn-diagnose": "Diagnose",
+                "feature-soil-monitoring": "Soil Monitoring",
                 "feature-soil-monitoring-desc": "Real-time soil pH, moisture, and temperature monitoring through IoT sensors.",
                 "sensor-ph": "pH Level",
                 "sensor-moisture": "Moisture",
@@ -750,3 +764,15 @@ class TranslationUtils:
                 "try-again": "আবার চেষ্টা করুন"
             }
         }
+
+    @staticmethod
+    def get_translation(lang, key):
+        """Get a specific translation by language and key"""
+        try:
+            translations = TranslationUtils.get_translations()
+            lang_code = lang if lang in translations else 'en'
+            return translations[lang_code].get(key, f"[{key}]")
+        except Exception as e:
+            # Note: Ensure 'logging' is imported at the top of utils.py
+            print(f"Error getting translation: {e}")
+            return f"[{key}]"
