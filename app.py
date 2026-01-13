@@ -113,180 +113,164 @@ except:
 
 class EnhancedPlantDiseaseDetector:
     def __init__(self):
-        self.models = {}  
+        self.tflite_models = {}
+        self.tflite_details = {}
+        
         self.classes = {
-            'wheat': ['HealthyLeaf', 'BlackPoint', 'LeafBlight', 'FusariumFootRot','WheatBlast'],
-            'tomato': ['healthy', 'bacterial_spot', 'early_blight', 'late_blight', 'leaf_mold', 'septoria_leaf_spot', 'spider_mites', 'target_spot', 'mosaic_virus', 'yellow_leaf_curl'],
+            'wheat': ['HealthyLeaf', 'BlackPoint', 'LeafBlight', 'FusariumFootRot', 'WheatBlast'],
+            'tomato': ['healthy', 'bacterial_spot', 'early_blight', 'late_blight',
+                      'leaf_mold', 'septoria_leaf_spot', 'spider_mites',
+                      'target_spot', 'mosaic_virus', 'yellow_leaf_curl'],
             'potato': ['Potato___healthy', 'Potato___Early_blight', 'Potato___late_blight'],
             'rice': ['healthy', 'bacterial_blight', 'brown_spot', 'leaf_smut']
         }
         
         self.treatments = {
             'HealthyLeaf': 'No pesticide needed',
-            'BlackPoint': 'Fungicides like Mancozeb, Azoxystrobin, or Chlorothalonil',
-            'LeafBlight': 'Fungicides like Copper-based fungicides, Mancozeb, or Chlorothalonil',
-            'FusariumFootRot': 'Fungicides like Prothioconazole or Tebuconazole',
-            'WheatBlast': 'Fungicides like Tricyclazole or Azoxystrobin',
-            'tomato_healthy': 'Continue preventive care and regular monitoring.',
-            'tomato_bacterial_spot': 'Apply copper-based bactericides. Use resistant varieties.',
-            'tomato_early_blight': 'Use chlorothalonil fungicide. Remove affected leaves.',
-            'tomato_late_blight': 'Apply metalaxyl fungicides. Improve ventilation.',
-            'tomato_leaf_mold': 'Increase ventilation. Apply fungicides.',
-            'tomato_septoria_leaf_spot': 'Use chlorothalonil or copper fungicides.',
-            'tomato_spider_mites': 'Apply miticides or neem oil. Increase humidity.',
-            'tomato_target_spot': 'Use fungicides containing chlorothalonil.',
-            'tomato_mosaic_virus': 'Remove infected plants. Sanitize tools and hands.',
-            'tomato_yellow_leaf_curl': 'Control whiteflies. Remove infected plants.',
-            'Potato___healthy': 'Continue regular monitoring and care.',
-            'Potato___Early_blight': 'Apply chlorothalonil or mancozeb. Improve air circulation.',
-            'Potato___late_blight': 'Use metalaxyl-based fungicides. Avoid overhead irrigation.',
-            'rice_healthy': 'Maintain proper water management and nutrition.',
-            'rice_bacterial_blight': 'Use copper oxychloride spray. Improve drainage.',
-            'rice_brown_spot': 'Apply potash fertilizer. Use propiconazole or tricyclazole.',
-            'rice_leaf_smut': 'Apply tricyclazole fungicide. Use resistant varieties.'
+            'BlackPoint': 'Use Mancozeb or Chlorothalonil',
+            'LeafBlight': 'Copper-based fungicides',
+            'FusariumFootRot': 'Use Prothioconazole',
+            'WheatBlast': 'Use Tricyclazole',
+            'tomato_healthy': 'Continue preventive care',
+            'tomato_bacterial_spot': 'Use copper-based bactericides',
+            'tomato_early_blight': 'Apply chlorothalonil',
+            'tomato_late_blight': 'Apply metalaxyl',
+            'tomato_leaf_mold': 'Improve ventilation',
+            'tomato_septoria_leaf_spot': 'Use copper fungicides',
+            'tomato_spider_mites': 'Apply neem oil',
+            'tomato_target_spot': 'Apply chlorothalonil',
+            'tomato_mosaic_virus': 'Remove infected plants',
+            'tomato_yellow_leaf_curl': 'Control whiteflies',
+            'Potato___healthy': 'No treatment required',
+            'Potato___Early_blight': 'Use mancozeb',
+            'Potato___late_blight': 'Use metalaxyl',
+            'rice_healthy': 'Maintain nutrients',
+            'rice_bacterial_blight': 'Use copper oxychloride',
+            'rice_brown_spot': 'Apply propiconazole',
+            'rice_leaf_smut': 'Apply tricyclazole'
         }
-        
-        self.severity_levels = {
-            'low': (0, 30),
-            'medium': (30, 70),
-            'high': (70, 100)
-        }
-    
+
     def load_models(self):
-        models_dir = 'models'
+        """Load only TFLite models"""
+        models_dir = "models"
+        
         model_files = {
-            'wheat': 'Wheat_best_final_model.keras',
-            'tomato': 'tomato_model.keras', 
-            'potato': 'potato_best_final_model.keras',
-            'rice': 'rice_best_final_model_fixed.keras'
+            'wheat': 'Wheat_best_final_model.tflite',
+            'tomato': 'tomato_model.tflite',
+            'potato': 'potato_best_final_model.tflite',
+            'rice': 'rice_best_final_model_fixed.tflite'
         }
         
-        loaded_count = 0
-        for plant_type, model_file in model_files.items():
-            model_path = os.path.join(models_dir, model_file)
+        loaded = 0
+        for plant, file in model_files.items():
+            path = os.path.join(models_dir, file)
+            
+            if not os.path.exists(path):
+                logging.warning(f"{plant} model not found at {path}")
+                continue
+            
             try:
-                if os.path.exists(model_path):
-                    try:
-                        self.models[plant_type] = tf.keras.models.load_model(model_path)
-                        print(f"✓ {plant_type.capitalize()} model loaded successfully")
-                    except Exception as e:
-                        print(f"Standard load failed for {plant_type}, trying compile=False: {e}")
-                        self.models[plant_type] = tf.keras.models.load_model(model_path, compile=False)
-                        print(f"✓ {plant_type.capitalize()} model loaded without compilation")
-                    loaded_count += 1
-                else:
-                    print(f"⚠ {plant_type.capitalize()} model file not found at {model_path}")
+                interpreter = tf.lite.Interpreter(model_path=path)
+                interpreter.allocate_tensors()
+                
+                self.tflite_models[plant] = interpreter
+                self.tflite_details[plant] = {
+                    "input": interpreter.get_input_details(),
+                    "output": interpreter.get_output_details()
+                }
+                
+                logging.info(f"{plant.capitalize()} TFLite model loaded")
+                loaded += 1
+                
             except Exception as e:
-                print(f"Error loading {plant_type} model: {e}")
-                traceback.print_exc()
+                logging.error(f"Failed to load {plant}: {e}")
         
-        return loaded_count > 0
-    
+        return loaded > 0
+
     def predict_disease(self, image_path, plant_type=None):
-        print(f"Predicting disease for image: {image_path}, plant_type: {plant_type}")
-        
         if plant_type is None:
             plant_type = self._detect_plant_type(image_path)
-            print(f"Auto-detected plant type: {plant_type}")
         
-        if plant_type not in self.models:
-            print(f"No model found for plant type: {plant_type}, using mock prediction")
-            return self._get_mock_prediction(plant_type)
+        if plant_type not in self.classes:
+            return self._get_mock_prediction('tomato')
         
         processed_image = ImageProcessor.preprocess_for_ml(image_path)
         if processed_image is None:
-            print(f"Image preprocessing failed for: {image_path}")
             return self._get_mock_prediction(plant_type)
         
         try:
-            print(f"Making prediction with {plant_type} model...")
-            predictions = self.models[plant_type].predict(processed_image)
-            predicted_class_idx = np.argmax(predictions[0])
-            confidence = float(predictions[0][predicted_class_idx])
-            
-            predicted_class = self.classes[plant_type][predicted_class_idx]
-            disease_key = f"{plant_type}_{predicted_class}"
-            treatment = self.treatments.get(disease_key, "Consult agricultural expert")
-            severity = self._determine_severity(confidence)
-            
-            result = {
-                'plant_type': plant_type.capitalize(),
-                'disease': predicted_class.replace('_', ' ').title(),
-                'confidence': confidence * 100,
-                'treatment': treatment,
-                'severity': severity,
-                'recommendations': self._get_detailed_recommendations(disease_key, severity)
-            }
-            
-            print(f"Prediction successful: {result}")
-            return result
-            
+            if plant_type in self.tflite_models:
+                interpreter = self.tflite_models[plant_type]
+                details = self.tflite_details[plant_type]
+                
+                interpreter.set_tensor(
+                    details["input"][0]["index"],
+                    processed_image.astype(np.float32)
+                )
+                interpreter.invoke()
+                
+                predictions = interpreter.get_tensor(
+                    details["output"][0]["index"]
+                )
+                
+                idx = np.argmax(predictions[0])
+                confidence = float(predictions[0][idx])
+                
+                disease = self.classes[plant_type][idx]
+                key = f"{plant_type}_{disease}"
+                
+                return {
+                    "plant_type": plant_type.capitalize(),
+                    "disease": disease.replace("_", " ").title(),
+                    "confidence": round(confidence * 100, 2),
+                    "treatment": self.treatments.get(key, "Consult expert"),
+                    "severity": self._determine_severity(confidence),
+                    "recommendations": self._get_detailed_recommendations(key)
+                }
+            else:
+                return self._get_mock_prediction(plant_type)
+                
         except Exception as e:
-            print(f"Error making prediction: {e}")
-            traceback.print_exc()
+            logging.error(f"Prediction error: {e}")
             return self._get_mock_prediction(plant_type)
-    
+
     def _detect_plant_type(self, image_path):
-        filename = os.path.basename(image_path).lower()
-        if 'wheat' in filename:
-            return 'wheat'
-        elif 'tomato' in filename:
-            return 'tomato'
-        elif 'potato' in filename:
-            return 'potato'
-        elif 'rice' in filename:
-            return 'rice'
-        else:
-            return random.choice(['wheat', 'tomato', 'potato', 'rice'])
-    
-    def _get_mock_prediction(self, plant_type):
-        if plant_type not in self.classes:
-            plant_type = 'tomato'
-        
-        disease = random.choice(self.classes[plant_type])
-        confidence = random.uniform(75, 95)
-        disease_key = f"{plant_type}_{disease}"
-        
-        return {
-            'plant_type': plant_type.capitalize(),
-            'disease': disease.replace('_', ' ').title(),
-            'confidence': confidence,
-            'treatment': self.treatments.get(disease_key, "Continue monitoring"),
-            'severity': self._determine_severity(confidence/100),
-            'recommendations': self._get_detailed_recommendations(disease_key, self._determine_severity(confidence/100))
-        }
-    
+        name = image_path.lower()
+        for plant in self.classes:
+            if plant in name:
+                return plant
+        return random.choice(list(self.classes.keys()))
+
     def _determine_severity(self, confidence):
         if confidence < 0.3:
-            return 'low'
+            return "low"
         elif confidence < 0.7:
-            return 'medium'
-        else:
-            return 'high'
-    
-    def _get_detailed_recommendations(self, disease, severity):
-        base_recommendations = [
-            "Monitor plant regularly for symptoms",
-            "Maintain proper field hygiene",
-            "Use disease-resistant varieties when possible"
-        ]
-        
-        if 'healthy' not in disease.lower():
-            if severity == 'high':
-                base_recommendations.extend([
-                    "Immediate treatment required",
-                    "Consider professional consultation",
-                    "Isolate affected plants if possible"
-                ])
-            elif severity == 'medium':
-                base_recommendations.extend([
-                    "Apply preventive measures",
-                    "Monitor closely for spread"
-                ])
-        
-        return base_recommendations
+            return "medium"
+        return "high"
 
-# Initialize plant detector
+    def _get_detailed_recommendations(self, disease_key):
+        recs = [
+            "Monitor plant regularly",
+            "Maintain field hygiene",
+            "Use resistant varieties"
+        ]
+        if "healthy" not in disease_key:
+            recs.append("Apply recommended treatment promptly")
+        return recs
+
+    def _get_mock_prediction(self, plant_type):
+        disease = random.choice(self.classes[plant_type])
+        conf = random.uniform(70, 95)
+        return {
+            "plant_type": plant_type.capitalize(),
+            "disease": disease.replace("_", " ").title(),
+            "confidence": round(conf, 2),
+            "treatment": "Demo mode",
+            "severity": "medium",
+            "recommendations": ["Demo prediction"]
+        }
+
+# Initialize detector
 plant_detector = EnhancedPlantDiseaseDetector()
 
 # ============================================================================
