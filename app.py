@@ -23,21 +23,14 @@ import traceback
 import joblib
 from PIL import Image
 
-# Import TFLite interpreter - try tflite_runtime first, then tensorflow
+# Import TFLite interpreter - ONLY tflite_runtime (lightweight)
 try:
     import tflite_runtime.interpreter as tflite
     TFLITE_AVAILABLE = True
-    logging.info("Using tflite_runtime")
 except ImportError:
-    try:
-        import tensorflow as tf
-        tflite = tf.lite
-        TFLITE_AVAILABLE = True
-        logging.info("Using tensorflow.lite")
-    except ImportError:
-        logging.warning("Neither tflite_runtime nor tensorflow available - models will use mock predictions")
-        TFLITE_AVAILABLE = False
-        tflite = None
+    logging.warning("tflite_runtime not available - using mock predictions only")
+    TFLITE_AVAILABLE = False
+    tflite = None
 
 from config import Config
 from database import DatabaseManager, initialize_database
@@ -167,6 +160,7 @@ class PlantDiseaseDetector:
     def __init__(self):
         self.models = {}
         self.model_details = {}
+        self.available_models = []
         
         self.classes = {
             'wheat': ['HealthyLeaf', 'BlackPoint', 'LeafBlight', 'FusariumFootRot', 'WheatBlast'],
@@ -203,7 +197,7 @@ class PlantDiseaseDetector:
         }
 
     def load_models(self):
-        """Load TFLite models"""
+        """Load TFLite models lazily - only load one at a time to save memory"""
         if not TFLITE_AVAILABLE:
             logger.warning("TFLite not available - cannot load models")
             return False
@@ -216,31 +210,51 @@ class PlantDiseaseDetector:
             'rice': 'rice_best_final_model_fixed.tflite'
         }
         
-        loaded_count = 0
+        # Only check if files exist, don't load all into memory
+        available_models = []
         for plant_type, filename in model_files.items():
             model_path = os.path.join(models_dir, filename)
-            
-            if not os.path.exists(model_path):
-                logger.warning(f"{plant_type} model not found: {model_path}")
-                continue
-            
-            try:
-                interpreter = tflite.Interpreter(model_path=model_path)
-                interpreter.allocate_tensors()
-                
-                self.models[plant_type] = interpreter
-                self.model_details[plant_type] = {
-                    'input': interpreter.get_input_details(),
-                    'output': interpreter.get_output_details()
-                }
-                
-                logger.info(f"✓ Loaded {plant_type} model")
-                loaded_count += 1
-                
-            except Exception as e:
-                logger.error(f"Failed to load {plant_type} model: {e}")
+            if os.path.exists(model_path):
+                available_models.append(plant_type)
+                logger.info(f"✓ Found {plant_type} model")
+            else:
+                logger.warning(f"✗ {plant_type} model not found: {model_path}")
         
-        return loaded_count > 0
+        self.available_models = available_models
+        return len(available_models) > 0
+
+    def _load_model_on_demand(self, plant_type):
+        """Load model only when needed to save memory"""
+        if plant_type in self.models:
+            return True
+        
+        if plant_type not in self.available_models:
+            return False
+        
+        model_files = {
+            'wheat': 'Wheat_best_final_model.tflite',
+            'tomato': 'tomato_model.tflite',
+            'potato': 'potato_best_final_model.tflite',
+            'rice': 'rice_best_final_model_fixed.tflite'
+        }
+        
+        try:
+            model_path = os.path.join(Config.MODEL_DIR, model_files[plant_type])
+            interpreter = tflite.Interpreter(model_path=model_path)
+            interpreter.allocate_tensors()
+            
+            self.models[plant_type] = interpreter
+            self.model_details[plant_type] = {
+                'input': interpreter.get_input_details(),
+                'output': interpreter.get_output_details()
+            }
+            
+            logger.info(f"✓ Loaded {plant_type} model on demand")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to load {plant_type} model: {e}")
+            return False
 
     def predict(self, image_path, plant_type=None):
         """Predict disease from image"""
@@ -255,8 +269,8 @@ class PlantDiseaseDetector:
         if processed_image is None:
             return self._mock_prediction(plant_type)
         
-        # Try real prediction if model available
-        if plant_type in self.models:
+        # Load model on demand
+        if self._load_model_on_demand(plant_type):
             try:
                 interpreter = self.models[plant_type]
                 details = self.model_details[plant_type]
@@ -277,6 +291,11 @@ class PlantDiseaseDetector:
                 
                 treatment_key = f"{plant_type}_{disease}"
                 treatment = self.treatments.get(treatment_key, "Consult agricultural expert")
+                
+                # Unload model to free memory
+                if len(self.models) > 1:
+                    del self.models[plant_type]
+                    del self.model_details[plant_type]
                 
                 return {
                     'plant_type': plant_type.capitalize(),
@@ -834,7 +853,7 @@ def health():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'models': len(disease_detector.models),
+        'models': len(disease_detector.available_models),
         'db': 'ok' if DatabaseManager.get_connection() else 'error'
     })
 
@@ -859,9 +878,9 @@ if __name__ == '__main__':
     
     # Load models
     if disease_detector.load_models():
-        logger.info(f"✓ Loaded {len(disease_detector.models)} models")
+        logger.info(f"✓ Found {len(disease_detector.available_models)} models (lazy loading)")
     else:
-        logger.warning("⚠ No models loaded - using mock predictions")
+        logger.warning("⚠ No models found - using mock predictions")
     
     # Start IoT
     iot_sim.start()
@@ -870,7 +889,7 @@ if __name__ == '__main__':
     logger.info("=" * 50)
     logger.info("🌱 Krishi Sahyog Agricultural System")
     logger.info("=" * 50)
-    logger.info(f"Models: {len(disease_detector.models)}")
+    logger.info(f"Models: {len(disease_detector.available_models)}")
     logger.info(f"Weather: {'API' if WEATHER_API_KEY else 'Mock'}")
     logger.info(f"Chatbot: {'Gemini' if GEMINI_API_URL else 'Fallback'}")
     logger.info(f"Test: test@test.com / test123")
@@ -879,9 +898,6 @@ if __name__ == '__main__':
     # Run app
     port = int(os.environ.get('PORT', 5000))
     
-    if IS_PRODUCTION:
-        logger.info(f"PRODUCTION mode on port {port}")
-        socketio.run(app, host='0.0.0.0', port=port, debug=False)
-    else:
-        logger.info(f"DEVELOPMENT mode on port {port}")
-        socketio.run(app, host='0.0.0.0', port=port, debug=True)
+    # Always run in production mode on Render
+    logger.info(f"Starting on port {port}")
+    socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False)
