@@ -5,7 +5,7 @@ Flask application with all routes, API endpoints, and services
 
 from functools import wraps
 import os
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for, flash
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
@@ -20,25 +20,21 @@ from werkzeug.security import check_password_hash
 import numpy as np
 import re
 import traceback
-import joblib
-from PIL import Image
 
-# Import TFLite interpreter - ONLY tflite_runtime (lightweight)
 try:
     import tflite_runtime.interpreter as tflite
     TFLITE_AVAILABLE = True
 except ImportError:
-    logging.warning("tflite_runtime not available - using mock predictions only")
+    logging.warning("tflite_runtime not available")
     TFLITE_AVAILABLE = False
     tflite = None
 
 from config import Config
 from database import DatabaseManager, initialize_database
+from utils import ImageProcessor, WeatherUtils, CropDataAnalyzer
 
-# Load environment variables
 load_dotenv()
 
-# Set up logging
 log_level = logging.INFO if os.environ.get('FLASK_ENV') == 'production' else logging.DEBUG
 logging.basicConfig(
     level=log_level,
@@ -47,83 +43,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Get API keys
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
 
 if not GOOGLE_API_KEY:
-    logger.warning("GOOGLE_API_KEY not set - chatbot will use fallback responses")
+    logger.warning("GOOGLE_API_KEY not set")
 
-# Initialize Flask app
 app = Flask(__name__)
 app.config.from_object(Config)
 
-# Session configuration
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(24).hex())
 app.permanent_session_lifetime = timedelta(days=7)
 
-# Production vs Development settings
 IS_PRODUCTION = os.environ.get('FLASK_ENV') == 'production'
 app.config['SESSION_COOKIE_SECURE'] = IS_PRODUCTION
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
-# CORS configuration
 CORS(app, supports_credentials=True)
-
-# SocketIO configuration
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Gemini API URL
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}" if GOOGLE_API_KEY else None
-
-# ============================================================================
-# UTILITY CLASSES
-# ============================================================================
-
-class ImageProcessor:
-    @staticmethod
-    def preprocess_for_ml(image_path, target_size=(224, 224)):
-        """Preprocess image for ML model"""
-        try:
-            img = Image.open(image_path)
-            img = img.convert('RGB')
-            img = img.resize(target_size)
-            img_array = np.array(img, dtype=np.float32)
-            img_array = img_array / 255.0  # Normalize to [0, 1]
-            img_array = np.expand_dims(img_array, axis=0)  # Add batch dimension
-            return img_array
-        except Exception as e:
-            logger.error(f"Image preprocessing error: {e}")
-            return None
-
-class CropDataAnalyzer:
-    @staticmethod
-    def analyze_soil_conditions(ph, moisture, temperature):
-        """Analyze soil conditions"""
-        analysis = {
-            'ph_status': 'optimal' if 6.0 <= ph <= 7.5 else 'needs_adjustment',
-            'moisture_status': 'good' if 40 <= moisture <= 80 else 'needs_attention',
-            'temperature_status': 'suitable' if 15 <= temperature <= 35 else 'extreme',
-            'recommendations': []
-        }
-        
-        if ph < 6.0:
-            analysis['recommendations'].append("Soil is acidic - consider adding lime")
-        elif ph > 7.5:
-            analysis['recommendations'].append("Soil is alkaline - consider adding sulfur")
-        
-        if moisture < 40:
-            analysis['recommendations'].append("Increase irrigation frequency")
-        elif moisture > 80:
-            analysis['recommendations'].append("Reduce watering - improve drainage")
-        
-        if temperature < 15:
-            analysis['recommendations'].append("Temperature low - protect sensitive crops")
-        elif temperature > 35:
-            analysis['recommendations'].append("High temperature - provide shade and increase watering")
-        
-        return analysis
 
 # ============================================================================
 # AUTHENTICATION DECORATOR
@@ -153,7 +93,7 @@ sensor_data = {
 }
 
 # ============================================================================
-# PLANT DISEASE DETECTION
+# PLANT DISEASE DETECTOR
 # ============================================================================
 
 class PlantDiseaseDetector:
@@ -197,9 +137,9 @@ class PlantDiseaseDetector:
         }
 
     def load_models(self):
-        """Load TFLite models lazily - only load one at a time to save memory"""
+        """Check available models"""
         if not TFLITE_AVAILABLE:
-            logger.warning("TFLite not available - cannot load models")
+            logger.warning("TFLite not available")
             return False
         
         models_dir = Config.MODEL_DIR
@@ -210,21 +150,18 @@ class PlantDiseaseDetector:
             'rice': 'rice_best_final_model_fixed.tflite'
         }
         
-        # Only check if files exist, don't load all into memory
-        available_models = []
+        available = []
         for plant_type, filename in model_files.items():
-            model_path = os.path.join(models_dir, filename)
-            if os.path.exists(model_path):
-                available_models.append(plant_type)
-                logger.info(f"✓ Found {plant_type} model")
-            else:
-                logger.warning(f"✗ {plant_type} model not found: {model_path}")
+            path = os.path.join(models_dir, filename)
+            if os.path.exists(path):
+                available.append(plant_type)
+                logger.info(f"Found model: {plant_type}")
         
-        self.available_models = available_models
-        return len(available_models) > 0
+        self.available_models = available
+        return len(available) > 0
 
-    def _load_model_on_demand(self, plant_type):
-        """Load model only when needed to save memory"""
+    def _load_model(self, plant_type):
+        """Load model on demand"""
         if plant_type in self.models:
             return True
         
@@ -239,8 +176,8 @@ class PlantDiseaseDetector:
         }
         
         try:
-            model_path = os.path.join(Config.MODEL_DIR, model_files[plant_type])
-            interpreter = tflite.Interpreter(model_path=model_path)
+            path = os.path.join(Config.MODEL_DIR, model_files[plant_type])
+            interpreter = tflite.Interpreter(model_path=path)
             interpreter.allocate_tensors()
             
             self.models[plant_type] = interpreter
@@ -249,68 +186,56 @@ class PlantDiseaseDetector:
                 'output': interpreter.get_output_details()
             }
             
-            logger.info(f"✓ Loaded {plant_type} model on demand")
+            logger.info(f"Loaded model: {plant_type}")
             return True
-            
         except Exception as e:
-            logger.error(f"Failed to load {plant_type} model: {e}")
+            logger.error(f"Failed to load {plant_type}: {e}")
             return False
 
     def predict(self, image_path, plant_type=None):
-        """Predict disease from image"""
+        """Predict disease"""
         if plant_type is None:
             plant_type = self._detect_plant_type(image_path)
         
         if plant_type not in self.classes:
-            plant_type = 'tomato'  # Default
+            plant_type = 'tomato'
         
-        # Preprocess image
         processed_image = ImageProcessor.preprocess_for_ml(image_path)
         if processed_image is None:
             return self._mock_prediction(plant_type)
         
-        # Load model on demand
-        if self._load_model_on_demand(plant_type):
+        if self._load_model(plant_type):
             try:
                 interpreter = self.models[plant_type]
                 details = self.model_details[plant_type]
                 
-                # Set input
                 interpreter.set_tensor(details['input'][0]['index'], processed_image)
-                
-                # Run inference
                 interpreter.invoke()
                 
-                # Get output
                 output = interpreter.get_tensor(details['output'][0]['index'])
-                
-                # Get prediction
-                predicted_idx = np.argmax(output[0])
-                confidence = float(output[0][predicted_idx])
-                disease = self.classes[plant_type][predicted_idx]
+                idx = np.argmax(output[0])
+                confidence = float(output[0][idx])
+                disease = self.classes[plant_type][idx]
                 
                 treatment_key = f"{plant_type}_{disease}"
                 treatment = self.treatments.get(treatment_key, "Consult agricultural expert")
                 
-                # Unload model to free memory
                 if len(self.models) > 1:
                     del self.models[plant_type]
                     del self.model_details[plant_type]
                 
                 return {
                     'plant_type': plant_type.capitalize(),
-                    'disease': disease.replace('_', ' ').replace('___', ' ').title(),
+                    'disease': disease.replace('_', ' ').title(),
                     'confidence': round(confidence * 100, 2),
                     'treatment': treatment,
-                    'severity': self._get_severity(confidence),
-                    'recommendations': self._get_recommendations(disease)
+                    'severity': 'high' if confidence >= 0.8 else 'medium' if confidence >= 0.5 else 'low',
+                    'recommendations': ['Monitor regularly', 'Apply treatment promptly']
                 }
-                
             except Exception as e:
                 logger.error(f"Prediction error: {e}")
                 return self._mock_prediction(plant_type)
         
-        # Fallback to mock
         return self._mock_prediction(plant_type)
 
     def _detect_plant_type(self, image_path):
@@ -321,35 +246,18 @@ class PlantDiseaseDetector:
                 return plant
         return 'tomato'
 
-    def _get_severity(self, confidence):
-        """Get severity level"""
-        if confidence >= 0.8:
-            return 'high'
-        elif confidence >= 0.5:
-            return 'medium'
-        return 'low'
-
-    def _get_recommendations(self, disease):
-        """Get recommendations"""
-        recs = ['Monitor plant regularly', 'Maintain field hygiene']
-        if 'healthy' not in disease.lower():
-            recs.extend(['Apply treatment promptly', 'Isolate affected plants'])
-        return recs
-
     def _mock_prediction(self, plant_type):
-        """Mock prediction for testing"""
+        """Mock prediction"""
         disease = random.choice(self.classes.get(plant_type, self.classes['tomato']))
-        confidence = random.uniform(75, 95)
         return {
             'plant_type': plant_type.capitalize(),
             'disease': disease.replace('_', ' ').title(),
-            'confidence': round(confidence, 2),
-            'treatment': 'Demo mode - upload real image for actual diagnosis',
+            'confidence': round(random.uniform(75, 95), 2),
+            'treatment': 'Demo - upload real image for diagnosis',
             'severity': 'medium',
-            'recommendations': ['This is a demo prediction']
+            'recommendations': ['Demo prediction']
         }
 
-# Initialize detector
 disease_detector = PlantDiseaseDetector()
 
 # ============================================================================
@@ -359,58 +267,17 @@ disease_detector = PlantDiseaseDetector()
 class WeatherService:
     @staticmethod
     def get_weather(lat=None, lon=None):
-        """Get weather data"""
+        """Get weather"""
         if lat is None:
             lat = Config.DEFAULT_LAT
         if lon is None:
             lon = Config.DEFAULT_LON
         
-        # Try real API if available
-        if WEATHER_API_KEY and WEATHER_API_KEY != 'your_openweather_api_key_here':
-            try:
-                url = f"{Config.WEATHER_BASE_URL}/weather"
-                params = {
-                    'lat': lat,
-                    'lon': lon,
-                    'appid': WEATHER_API_KEY,
-                    'units': 'metric'
-                }
-                response = requests.get(url, params=params, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    return {
-                        'temperature': round(data['main']['temp'], 1),
-                        'humidity': data['main']['humidity'],
-                        'description': data['weather'][0]['description'].title(),
-                        'wind_speed': data.get('wind', {}).get('speed', 0),
-                        'location': data.get('name', Config.DEFAULT_LOCATION)
-                    }
-            except Exception as e:
-                logger.debug(f"Weather API error: {e}")
-        
-        # Mock weather
-        return WeatherService._mock_weather()
-    
-    @staticmethod
-    def _mock_weather():
-        """Generate mock weather"""
-        month = datetime.now().month
-        if month in [12, 1, 2]:
-            temp, humid = 20, 65
-        elif month in [3, 4, 5]:
-            temp, humid = 32, 70
-        elif month in [6, 7, 8, 9]:
-            temp, humid = 28, 85
-        else:
-            temp, humid = 26, 75
-        
-        return {
-            'temperature': round(temp + random.uniform(-3, 3), 1),
-            'humidity': int(humid + random.randint(-10, 10)),
-            'description': 'Partly Cloudy',
-            'wind_speed': round(random.uniform(2, 8), 1),
-            'location': Config.DEFAULT_LOCATION
-        }
+        try:
+            return WeatherUtils.get_real_weather(lat, lon)
+        except Exception as e:
+            logger.debug(f"Weather error: {e}")
+            return WeatherUtils._get_mock_weather()
 
 # ============================================================================
 # MARKET SERVICE
@@ -461,7 +328,6 @@ class IoTSimulator:
         global sensor_data
         while self.running:
             try:
-                # Update values
                 sensor_data['soil_ph'] = max(5.0, min(8.5, 
                     sensor_data['soil_ph'] + random.uniform(-0.05, 0.05)))
                 sensor_data['soil_moisture'] = max(15, min(95, 
@@ -476,7 +342,6 @@ class IoTSimulator:
                     sensor_data['potassium'] + random.randint(-1, 1)))
                 sensor_data['last_updated'] = datetime.now().isoformat()
                 
-                # Save to DB
                 try:
                     DatabaseManager.save_sensor_reading(
                         sensor_data['soil_ph'],
@@ -489,14 +354,12 @@ class IoTSimulator:
                 except:
                     pass
                 
-                # Emit via socket
                 try:
                     socketio.emit('sensor_update', sensor_data)
                 except:
                     pass
                 
                 time.sleep(Config.IOT_UPDATE_INTERVAL)
-                
             except Exception as e:
                 logger.error(f"IoT error: {e}")
                 time.sleep(5)
@@ -531,26 +394,32 @@ def login():
             
             user = DatabaseManager.get_user_by_email(email)
             
-            if user and check_password_hash(user['password'], password):
-                session.clear()
-                session['logged_in'] = True
-                session['user_id'] = user['id']
-                session['username'] = user['username']
-                session['email'] = user['email']
-                session.permanent = True
+            if user:
+                user_id, username, user_email, user_password = user
                 
-                try:
-                    DatabaseManager.update_last_login(user['id'])
-                except:
-                    pass
-                
-                logger.info(f"User logged in: {user['username']}")
-                return redirect(url_for('dashboard'))
-            
-            return render_template('login.html', error="Invalid email or password", success=success_msg)
+                if check_password_hash(user_password, password):
+                    session.clear()
+                    session['logged_in'] = True
+                    session['user_id'] = user_id
+                    session['username'] = username
+                    session['email'] = user_email
+                    session.permanent = True
+                    
+                    try:
+                        DatabaseManager.update_last_login(user_id)
+                    except:
+                        pass
+                    
+                    logger.info(f"User logged in: {username}")
+                    return redirect(url_for('dashboard'))
+                else:
+                    return render_template('login.html', error="Invalid password", success=success_msg)
+            else:
+                return render_template('login.html', error="Email not registered", success=success_msg)
             
         except Exception as e:
             logger.error(f"Login error: {e}")
+            logger.error(traceback.format_exc())
             return render_template('login.html', error="Login failed", success=success_msg)
     
     return render_template('login.html', success=success_msg)
@@ -563,7 +432,6 @@ def register():
             email = request.form.get('email', '').strip().lower()
             password = request.form.get('password', '')
             
-            # Validation
             if not all([username, email, password]):
                 return render_template('register.html', error="All fields required")
             
@@ -573,17 +441,17 @@ def register():
             if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
                 return render_template('register.html', error="Invalid email")
             
-            # Create user
             user_id = DatabaseManager.create_user(username, email, password)
             
             if user_id is None:
-                return render_template('register.html', error="Email already registered")
+                return render_template('register.html', error="Email or username already registered")
             
             logger.info(f"User registered: {username}")
             return redirect(url_for('login', registered='true'))
             
         except Exception as e:
             logger.error(f"Registration error: {e}")
+            logger.error(traceback.format_exc())
             return render_template('register.html', error="Registration failed")
     
     return render_template('register.html')
@@ -652,17 +520,14 @@ def upload_image():
         
         plant_type = request.form.get('plant_type')
         
-        # Save file
         filename = secure_filename(file.filename)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f"{timestamp}_{filename}"
         filepath = os.path.join(Config.UPLOAD_FOLDER, filename)
         file.save(filepath)
         
-        # Predict
         result = disease_detector.predict(filepath, plant_type)
         
-        # Save to DB
         try:
             DatabaseManager.save_diagnosis(
                 session['user_id'],
@@ -674,7 +539,6 @@ def upload_image():
         except:
             pass
         
-        # Cleanup
         try:
             os.remove(filepath)
         except:
@@ -684,6 +548,7 @@ def upload_image():
         
     except Exception as e:
         logger.error(f"Upload error: {e}")
+        logger.error(traceback.format_exc())
         return jsonify({'success': False, 'error': 'Upload failed'}), 500
 
 @app.route('/api/sensor-data')
@@ -726,7 +591,6 @@ def chat():
         user_message = data['message'].strip()
         lang = data.get('lang', 'en-IN').split('-')[0]
         
-        # Try Gemini API
         if GEMINI_API_URL:
             try:
                 payload = {
@@ -748,7 +612,6 @@ def chat():
             except:
                 pass
         
-        # Fallback
         fallback = get_fallback_response(user_message, lang)
         try:
             DatabaseManager.save_chat_message(session['user_id'], user_message, fallback, lang)
@@ -762,35 +625,39 @@ def chat():
         return jsonify({'error': 'Chat unavailable'}), 500
 
 def get_fallback_response(message, lang='en'):
-    """Simple fallback responses"""
+    """Fallback responses"""
     msg_lower = message.lower()
     
     responses = {
         'en': {
-            'weather': "Check the weather section for current conditions and forecast.",
-            'price': "Visit the market section for latest crop prices.",
-            'soil': f"Current soil: pH {sensor_data['soil_ph']:.1f}, Moisture {sensor_data['soil_moisture']}%",
-            'disease': "Upload a plant image in the diagnosis section for disease detection.",
-            'default': "I can help with weather, prices, soil analysis, and disease diagnosis. What would you like to know?"
+            'weather': "Check the weather section for current conditions.",
+            'price': "Visit market section for latest crop prices.",
+            'soil': f"pH {sensor_data['soil_ph']:.1f}, Moisture {sensor_data['soil_moisture']}%",
+            'disease': "Upload plant image in diagnosis section.",
+            'default': "I can help with weather, prices, soil analysis, and disease diagnosis."
         },
         'hi': {
             'weather': "मौसम अनुभाग में वर्तमान स्थिति देखें।",
             'price': "बाजार अनुभाग में नवीनतम फसल मूल्य देखें।",
-            'soil': f"वर्तमान मिट्टी: pH {sensor_data['soil_ph']:.1f}, नमी {sensor_data['soil_moisture']}%",
-            'disease': "रोग पहचान के लिए निदान अनुभाग में पौधे की छवि अपलोड करें।",
-            'default': "मैं मौसम, कीमतें, मिट्टी विश्लेषण में मदद कर सकता हूं। आप क्या जानना चाहेंगे?"
+            'soil': f"pH {sensor_data['soil_ph']:.1f}, नमी {sensor_data['soil_moisture']}%",
+            'disease': "निदान अनुभाग में छवि अपलोड करें।",
+            'default': "मैं मौसम, कीमतें, मिट्टी विश्लेषण में मदद कर सकता हूं।"
         },
         'bn': {
-            'weather': "আবহাওয়া বিভাগে বর্তমান অবস্থা দেখুন।",
-            'price': "বাজার বিভাগে সর্বশেষ ফসলের দাম দেখুন।",
-            'soil': f"বর্তমান মাটি: pH {sensor_data['soil_ph']:.1f}, আর্দ্রতা {sensor_data['soil_moisture']}%",
-            'disease': "রোগ নির্ণয়ের জন্য ডায়াগনসিস বিভাগে ছবি আপলোড করুন।",
-            'default': "আমি আবহাওয়া, দাম, মাটি বিশ্লেষণে সাহায্য করতে পারি। আপনি কী জানতে চান?"
+            'weather': "আবহাওয়া বিভাগে দেখুন।",
+            'price': "বাজার বিভাগে দাম দেখুন।",
+            'soil': f"pH {sensor_data['soil_ph']:.1f}, আর্দ্রতা {sensor_data['soil_moisture']}%",
+            'disease': "ডায়াগনসিস বিভাগে ছবি আপলোড করুন।",
+            'default': "আমি আবহাওয়া, দাম, মাটি বিশ্লেষণে সাহায্য করি।"
         }
     }
     
-    keywords = {'weather': ['weather', 'मौसम', 'আবহাওয়া'], 'price': ['price', 'भाव', 'দাম'], 
-                'soil': ['soil', 'मिट्टी', 'মাটি'], 'disease': ['disease', 'रोग', 'রোগ']}
+    keywords = {
+        'weather': ['weather', 'मौसम', 'আবহাওয়া'],
+        'price': ['price', 'भाव', 'দাম'],
+        'soil': ['soil', 'मिट्टी', 'মাটি'],
+        'disease': ['disease', 'रोग', 'রোগ']
+    }
     
     key = 'default'
     for k, words in keywords.items():
@@ -862,42 +729,32 @@ def health():
 # ============================================================================
 
 if __name__ == '__main__':
-    # Create directories
     try:
         os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
         os.makedirs(Config.MODEL_DIR, exist_ok=True)
     except Exception as e:
         logger.warning(f"Directory creation: {e}")
     
-    # Initialize database
     try:
         if initialize_database():
-            logger.info("✓ Database ready")
+            logger.info("Database ready")
     except Exception as e:
         logger.error(f"Database init error: {e}")
     
-    # Load models
     if disease_detector.load_models():
-        logger.info(f"✓ Found {len(disease_detector.available_models)} models (lazy loading)")
+        logger.info(f"Found {len(disease_detector.available_models)} models")
     else:
-        logger.warning("⚠ No models found - using mock predictions")
+        logger.warning("No models found - using mock predictions")
     
-    # Start IoT
     iot_sim.start()
     
-    # Display info
     logger.info("=" * 50)
-    logger.info("🌱 Krishi Sahyog Agricultural System")
+    logger.info("Krishi Sahyog Agricultural System")
     logger.info("=" * 50)
     logger.info(f"Models: {len(disease_detector.available_models)}")
-    logger.info(f"Weather: {'API' if WEATHER_API_KEY else 'Mock'}")
-    logger.info(f"Chatbot: {'Gemini' if GEMINI_API_URL else 'Fallback'}")
     logger.info(f"Test: test@test.com / test123")
     logger.info("=" * 50)
     
-    # Run app
     port = int(os.environ.get('PORT', 5000))
-    
-    # Always run in production mode on Render
     logger.info(f"Starting on port {port}")
     socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False)
