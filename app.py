@@ -360,23 +360,27 @@ disease_detector = PlantDiseaseDetector()
 class WeatherService:
     @staticmethod
     def get_weather(lat=None, lon=None):
-        """Get weather data"""
+        """Fetch weather data using the custom WEATHER_BASE_URL"""
         if lat is None:
             lat = Config.DEFAULT_LAT
         if lon is None:
             lon = Config.DEFAULT_LON
         
-        # Try real API if available
-        if WEATHER_API_KEY and WEATHER_API_KEY != 'your_openweather_api_key_here':
+        # Ensure your WEATHER_API_KEY is also set in Render Environment
+        api_key = os.getenv("WEATHER_API_KEY", "").strip()
+        
+        if api_key and api_key != 'your_openweather_api_key_here':
             try:
-                url = f"{Config.WEATHER_BASE_URL}/weather"
+                # Constructing the URL dynamically based on environment config
+                url = f"{WEATHER_URL}/weather"
                 params = {
                     'lat': lat,
                     'lon': lon,
-                    'appid': WEATHER_API_KEY,
+                    'appid': api_key,
                     'units': 'metric'
                 }
                 response = requests.get(url, params=params, timeout=10)
+                
                 if response.status_code == 200:
                     data = response.json()
                     return {
@@ -386,25 +390,19 @@ class WeatherService:
                         'wind_speed': data.get('wind', {}).get('speed', 0),
                         'location': data.get('name', Config.DEFAULT_LOCATION)
                     }
+                else:
+                    logger.error(f"Weather API returned status: {response.status_code}")
             except Exception as e:
-                logger.debug(f"Weather API error: {e}")
+                logger.debug(f"Weather API request failed: {e}")
         
-        # Mock weather
+        # Fallback to simulated data if API fails or key is missing
         return WeatherService._mock_weather()
-    
+
     @staticmethod
     def _mock_weather():
-        """Generate mock weather"""
+        """Simulated weather for testing/fallback"""
         month = datetime.now().month
-        if month in [12, 1, 2]:
-            temp, humid = 20, 65
-        elif month in [3, 4, 5]:
-            temp, humid = 32, 70
-        elif month in [6, 7, 8, 9]:
-            temp, humid = 28, 85
-        else:
-            temp, humid = 26, 75
-        
+        temp, humid = (20, 65) if month in [12, 1, 2] else (32, 70) if month in [3, 4, 5] else (28, 85) if month in [6, 7, 8, 9] else (26, 75)
         return {
             'temperature': round(temp + random.uniform(-3, 3), 1),
             'humidity': int(humid + random.randint(-10, 10)),
@@ -413,14 +411,11 @@ class WeatherService:
             'location': Config.DEFAULT_LOCATION
         }
 
-# ============================================================================
-# MARKET SERVICE
-# ============================================================================
-
 class MarketService:
     @staticmethod
     def get_prices():
-        """Get market prices"""
+        """Market price logic using MARKET_BASE_URL if needed"""
+        # Note: If using a real API, call f"{MARKET_URL}/prices"
         crops = {
             'rice': 28, 'wheat': 32, 'potato': 18,
             'onion': 15, 'tomato': 25, 'corn': 22
@@ -942,7 +937,6 @@ if __name__ == '__main__':
     logger.info("🌱 Krishi Sahyog Agricultural System")
     logger.info("=" * 50)
     logger.info(f"Models: {len(disease_detector.available_models)}")
-    logger.info(f"Weather: {'API' if WEATHER_API_KEY else 'Mock'}")
     logger.info(f"Chatbot: {'Gemini' if GEMINI_API_URL else 'Fallback'}")
     logger.info(f"Test: test@test.com / test123")
     logger.info("=" * 50)
