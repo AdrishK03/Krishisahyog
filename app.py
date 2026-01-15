@@ -527,29 +527,37 @@ def login():
             
             user = DatabaseManager.get_user_by_email(email)
             
-            if user and check_password_hash(user['password'], password):
-                session.clear()
-                session['logged_in'] = True
-                session['user_id'] = user['id']
-                session['username'] = user['username']
-                session['email'] = user['email']
-                session.permanent = True
+            # ✅ FIXED: Unpack tuple correctly
+            if user:
+                user_id, username, user_email, user_password = user
                 
-                try:
-                    DatabaseManager.update_last_login(user['id'])
-                except:
-                    pass
-                
-                logger.info(f"User logged in: {user['username']}")
-                return redirect(url_for('dashboard'))
-            
-            return render_template('login.html', error="Invalid email or password", success=success_msg)
+                if check_password_hash(user_password, password):
+                    session.clear()
+                    session['logged_in'] = True
+                    session['user_id'] = user_id
+                    session['username'] = username
+                    session['email'] = user_email
+                    session.permanent = True
+                    
+                    try:
+                        DatabaseManager.update_last_login(user_id)
+                    except:
+                        pass
+                    
+                    logger.info(f"User logged in: {username}")
+                    return redirect(url_for('dashboard'))
+                else:
+                    return render_template('login.html', error="Invalid password", success=success_msg)
+            else:
+                return render_template('login.html', error="Email not registered", success=success_msg)
             
         except Exception as e:
             logger.error(f"Login error: {e}")
+            logger.error(traceback.format_exc())
             return render_template('login.html', error="Login failed", success=success_msg)
     
     return render_template('login.html', success=success_msg)
+
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -573,13 +581,14 @@ def register():
             user_id = DatabaseManager.create_user(username, email, password)
             
             if user_id is None:
-                return render_template('register.html', error="Email already registered")
+                return render_template('register.html', error="Email or username already registered")
             
             logger.info(f"User registered: {username}")
             return redirect(url_for('login', registered='true'))
             
         except Exception as e:
             logger.error(f"Registration error: {e}")
+            logger.error(traceback.format_exc())
             return render_template('register.html', error="Registration failed")
     
     return render_template('register.html')
