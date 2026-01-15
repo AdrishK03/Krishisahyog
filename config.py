@@ -55,11 +55,9 @@ class Config:
     GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
     
     # OpenWeather API Key
-    WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
-    
-    # Market Data API Key (data.gov.in)
-    MARKET_API_KEY = os.environ.get('MARKET_API_KEY')
-    
+    WEATHER_BASE_URL = os.getenv("WEATHER_BASE_URL", "https://api.openweathermap.org/data/2.5")
+    MARKET_BASE_URL = os.getenv("MARKET_BASE_URL", "https://api.marketdata.com/v1")
+        
     # ============================================================================
     # CROP AND DISEASE CONFIGURATION
     # ============================================================================
