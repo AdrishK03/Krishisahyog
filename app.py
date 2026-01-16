@@ -101,37 +101,84 @@ class PlantDiseaseDetector:
         self.available_models = []
         
         self.classes = {
-            'wheat': ['HealthyLeaf', 'BlackPoint', 'LeafBlight', 'FusariumFootRot', 'WheatBlast'],
-            'tomato': ['healthy', 'bacterial_spot', 'early_blight', 'late_blight',
-                      'leaf_mold', 'septoria_leaf_spot', 'spider_mites',
-                      'target_spot', 'mosaic_virus', 'yellow_leaf_curl'],
-            'potato': ['Potato___healthy', 'Potato___Early_blight', 'Potato___late_blight'],
-            'rice': ['healthy', 'bacterial_blight', 'brown_spot', 'leaf_smut']
+                'wheat': [
+                'wheat__healthy',
+                'wheat__black_point',
+                'wheat__leaf_blight',
+                'wheat__fusarium_foot_rot',
+                'wheat__wheat_blast'
+            ],
+
+            'tomato': [
+                'tomato__healthy',
+                'tomato__bacterial_spot',
+                'tomato__early_blight',
+                'tomato__late_blight',
+                'tomato__leaf_mold',
+                'tomato__septoria_leaf_spot',
+                'tomato__spider_mites',
+                'tomato__target_spot',
+                'tomato__mosaic_virus',
+                'tomato__yellow_leaf_curl'
+            ],
+
+            'rice': [
+                'bacterial_leaf_blight',
+                'brown_spot',
+                'healthy',
+                'leaf_blast',
+                'leaf_scald',
+                'narrow_brown_spot'
+            ],
+
+            'potato': [
+                'Early Blight',
+                'Fungi',
+                'Healthy',
+                'Late Blight',
+                'Pest',
+                'Virus'
+            ]
+
         }
-        
+
+        # ===================== TREATMENTS =====================
         self.treatments = {
-            'wheat_HealthyLeaf': 'No pesticide needed',
-            'wheat_BlackPoint': 'Use Mancozeb or Chlorothalonil',
-            'wheat_LeafBlight': 'Copper-based fungicides',
-            'wheat_FusariumFootRot': 'Use Prothioconazole',
-            'wheat_WheatBlast': 'Use Tricyclazole',
-            'tomato_healthy': 'Continue preventive care',
-            'tomato_bacterial_spot': 'Use copper-based bactericides',
-            'tomato_early_blight': 'Apply chlorothalonil',
-            'tomato_late_blight': 'Apply metalaxyl',
-            'tomato_leaf_mold': 'Improve ventilation',
-            'tomato_septoria_leaf_spot': 'Use copper fungicides',
-            'tomato_spider_mites': 'Apply neem oil',
-            'tomato_target_spot': 'Apply chlorothalonil',
-            'tomato_mosaic_virus': 'Remove infected plants',
-            'tomato_yellow_leaf_curl': 'Control whiteflies',
-            'potato_Potato___healthy': 'No treatment required',
-            'potato_Potato___Early_blight': 'Use mancozeb',
-            'potato_Potato___late_blight': 'Use metalaxyl',
-            'rice_healthy': 'Maintain nutrients',
-            'rice_bacterial_blight': 'Use copper oxychloride',
-            'rice_brown_spot': 'Apply propiconazole',
-            'rice_leaf_smut': 'Apply tricyclazole'
+
+            # Wheat
+            'wheat__healthy': 'No pesticide needed',
+            'wheat__black_point': 'Use Mancozeb or Chlorothalonil',
+            'wheat__leaf_blight': 'Copper-based fungicides',
+            'wheat__fusarium_foot_rot': 'Use Prothioconazole',
+            'wheat__wheat_blast': 'Use Tricyclazole',
+
+            # Tomato
+            'tomato__healthy': 'Continue preventive care',
+            'tomato__bacterial_spot': 'Use copper-based bactericides',
+            'tomato__early_blight': 'Apply chlorothalonil',
+            'tomato__late_blight': 'Apply metalaxyl',
+            'tomato__leaf_mold': 'Improve ventilation',
+            'tomato__septoria_leaf_spot': 'Use copper fungicides',
+            'tomato__spider_mites': 'Apply neem oil',
+            'tomato__target_spot': 'Apply chlorothalonil',
+            'tomato__mosaic_virus': 'Remove infected plants',
+            'tomato__yellow_leaf_curl': 'Control whiteflies',
+
+            # Rice
+            'rice__bacterial_leaf_blight': 'Use copper oxychloride',
+            'rice__brown_spot': 'Apply propiconazole',
+            'rice__healthy': 'Maintain nutrients',
+            'rice__leaf_blast': 'Apply tricyclazole',
+            'rice__leaf_scald': 'Apply tricyclazole',
+            'rice__narrow_brown_spot': 'Use mancozeb',
+
+            # ---------- Potato ----------
+            'potato__Early Blight': 'Use mancozeb',
+            'potato__Fungi': 'Apply broad spectrum fungicide',
+            'potato__Healthy': 'No treatment required',
+            'potato__Late Blight': 'Use metalaxyl',
+            'potato__Pest': 'Use recommended insecticide',
+            'potato__Virus': 'Remove infected plants'
         }
 
     def load_models(self):
