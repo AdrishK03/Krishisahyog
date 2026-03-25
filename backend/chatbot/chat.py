@@ -1,78 +1,84 @@
-"""
-Agriculture chatbot using OpenAI or Gemini.
-API key from .env; returns error if missing.
-"""
 import os
+from dotenv import load_dotenv
 
-# Prefer OpenAI; fallback to Gemini if OPENAI_API_KEY not set
+load_dotenv()
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 SYSTEM_PROMPT = """You are KrishiSahyog AI, a helpful agriculture assistant for Indian farmers.
-You help with:
-- Plant disease identification and treatment
-- Soil analysis and fertilizer recommendations
-- Crop selection and planting advice
-- Weather and irrigation guidance
-- Pest and weed management
-- Market and pricing insights
-
 Respond in clear, simple language. Use Hindi or English based on the user's preference.
 Be practical and specific. When giving advice, consider Indian farming conditions."""
 
-
 def chat(user_message: str, history: list[dict] | None = None) -> dict:
-    """
-    Send message to LLM and get response.
-    Returns: {response, error?, provider}
-    """
     history = history or []
 
-    # Try OpenAI first
+    # =========================
+    # ✅ GEMINI (PRIMARY)
+    # =========================
+    if GEMINI_API_KEY:
+        try:
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=GEMINI_API_KEY)
+
+            # Gemini expects "model" instead of "assistant"
+            contents = []
+            for h in history[-10:]:
+                role = "model" if h.get("role") == "assistant" else "user"
+                contents.append({
+                    "role": role,
+                    "parts": [{"text": h.get("content", "")}]
+                })
+
+            contents.append({"role": "user", "parts": [{"text": user_message}]})
+
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=contents,
+                config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
+            )
+
+            return {
+                "response": response.text or "",
+                "provider": "gemini"
+            }
+        except Exception as e:
+            print(f"Gemini Error: {e}")
+            # If Gemini fails, we don't return yet; we let it fall through to OpenAI
+            pass 
+
+    # =========================
+    # ✅ OPENAI (FALLBACK)
+    # =========================
     if OPENAI_API_KEY:
         try:
             from openai import OpenAI
             client = OpenAI(api_key=OPENAI_API_KEY)
+
             messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-            for h in history[-10:]:  # Last 10 exchanges
-                messages.append({"role": h.get("role", "user"), "content": h.get("content", "")})
+            for h in history[-10:]:
+                messages.append({
+                    "role": h.get("role", "user"),
+                    "content": h.get("content", "")
+                })
             messages.append({"role": "user", "content": user_message})
 
             completion = client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
                 messages=messages,
             )
-            content = completion.choices[0].message.content or ""
-            return {"response": content, "provider": "openai"}
+
+            return {
+                "response": completion.choices[0].message.content or "",
+                "provider": "openai"
+            }
         except Exception as e:
             return {"response": "", "error": str(e), "provider": "openai"}
 
-    # Try Gemini
-    if GEMINI_API_KEY:
-        try:
-            try:
-                import google.generativeai as genai
-            except ImportError:
-                return {
-                    "response": "",
-                    "error": "Gemini SDK not installed. Run: pip install google-generativeai",
-                    "provider": None,
-                }
-            genai.configure(api_key=GEMINI_API_KEY)
-            model = genai.GenerativeModel("gemini-pro")
-            chat_session = model.start_chat(history=[])
-            for h in history[-10:]:
-                if h.get("role") == "user":
-                    chat_session.send_message(h.get("content", ""))
-                else:
-                    pass  # Gemini handles history differently
-            result = chat_session.send_message(user_message)
-            return {"response": result.text or "", "provider": "gemini"}
-        except Exception as e:
-            return {"response": "", "error": str(e), "provider": "gemini"}
-
     return {
         "response": "",
-        "error": "No LLM API key configured. Set OPENAI_API_KEY or GEMINI_API_KEY in backend/.env",
+        "error": "No API keys configured.",
         "provider": None,
     }
