@@ -2,14 +2,14 @@
 KrishiSahyog FastAPI backend.
 Run: uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 """
+from dotenv import load_dotenv
+# Load .env before any other imports that use env vars
+load_dotenv()
 import os
 import logging
 from contextlib import asynccontextmanager
 
-from dotenv import load_dotenv
 
-# Load .env before any other imports that use env vars
-load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -144,16 +144,29 @@ def chat_endpoint(
     req: ChatRequest,
     _user_id: str = Depends(require_auth),
 ):
-    """Agriculture chatbot. Requires auth."""
+    """Agriculture chatbot with Claude → Gemini → OpenAI fallback. Requires auth."""
     from chatbot.chat import chat
     result = chat(req.message, req.history)
     if result.get("error"):
-        raise HTTPException(status_code=503, detail=result["error"])
-    return {"response": result["response"], "provider": result.get("provider")}
+        # 503 = all providers failed, 429 = quota hit but at least one worked partially
+        status = 503
+        raise HTTPException(status_code=status, detail=result["error"])
+    return {
+        "response": result["response"],
+        "provider": result.get("provider", "unknown"),
+    }
 
 
 # --- Health ---
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    """Health check — also shows which AI providers are configured."""
+    configured = []
+    if os.getenv("ANTHROPIC_API_KEY"):
+        configured.append("claude")
+    if os.getenv("GEMINI_API_KEY"):
+        configured.append("gemini")
+    if os.getenv("OPENAI_API_KEY"):
+        configured.append("openai")
+    return {"status": "ok", "ai_providers": configured}
