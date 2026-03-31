@@ -6,27 +6,33 @@
    Earthy greens, warm browns, and soft yellows for a farmer-friendly interface
 */
 /* Target the iframe by ID and Class */
-#goog-gt-tt, 
+/* 1. Force the page to the very top */
+html, body {
+  top: 0 !important;
+  position: static !important;
+}
+
+/* 2. Hide the banner frame visually */
 .goog-te-banner-frame, 
-.goog-te-banner-frame.skiptranslate, 
-[id=":0.container"] {
-    display: none !important;
-    visibility: hidden !important;
+.goog-te-banner-frame.skiptranslate,
+#goog-gt-tt,
+.goog-te-balloon-frame {
+  display: none !important;
+  visibility: hidden !important;
 }
 
-/* Force the body back to the top */
-body {
-    top: 0 !important;
-    position: static !important; /* Overrides Google's 'relative' positioning */
+/* 3. Prevent the space reserved for the bar */
+iframe.goog-te-banner-frame {
+  display: none !important;
 }
 
-/* Hide the 'Powered by Google' attribution if needed */
-.goog-logo-link {
-    display: none !important;
+.skiptranslate { display: none !important; }
+body { top: 0px !important; 
 }
-.goog-te-gadget {
-    color: transparent !important;
-}
+
+
+
+
 @layer base {
   :root {
     /* Core Colors - Fresh Agricultural Greens */
