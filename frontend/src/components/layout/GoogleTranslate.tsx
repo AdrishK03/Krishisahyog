@@ -67,14 +67,14 @@ const GoogleTranslate = () => {
     // Hide Google Translate bar
     const style = document.createElement("style");
     style.innerHTML = `
-      .goog-te-banner-frame, .goog-te-balloon-frame { display: none !important; }
+      .goog-te-banner-frame,
+      .goog-te-balloon-frame,
+      #goog-gt-tt { display: none !important; }
       .goog-te-menu-value:hover { text-decoration: none !important; }
       body { top: 0 !important; }
-      .skiptranslate { display: none !important; }
       .goog-logo-link { display: none !important; }
       .goog-te-gadget { color: transparent !important; }
       .goog-te-gadget .goog-te-combo { color: initial; }
-      #goog-gt-tt, .goog-te-balloon-frame { display: none !important; }
       .goog-text-highlight { background: none !important; box-shadow: none !important; }
     `;
     document.head.appendChild(style);
@@ -92,6 +92,9 @@ const GoogleTranslate = () => {
     if (selectElement) {
       selectElement.value = langCode;
       selectElement.dispatchEvent(new Event("change"));
+      // React UIs can break when Google Translate mutates the DOM live.
+      // Reload keeps page and virtual DOM in sync after language switch.
+      window.setTimeout(() => window.location.reload(), 300);
     } else {
       // Fallback: Set cookie and reload
       document.cookie = `googtrans=/en/${langCode}; path=/`;

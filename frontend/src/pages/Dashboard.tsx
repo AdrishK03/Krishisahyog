@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import StatCard from "@/components/features/StatCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,14 +13,35 @@ import {
   Sun,
   Wind,
   RefreshCw,
+  CloudRain,
+  CloudSnow,
+  CloudLightning,
+  Loader2,
+  MapPin,
 } from "lucide-react";
 
-const weatherData = {
-  temp: "28°C",
-  humidity: "65%",
-  wind: "12 km/h",
-  condition: "Partly Cloudy",
-};
+function wmoToCondition(code: number): { condition: string; Icon: React.ElementType } {
+  if (code === 0) return { condition: "Clear Sky", Icon: Sun };
+  if (code <= 2) return { condition: "Partly Cloudy", Icon: Sun };
+  if (code === 3) return { condition: "Overcast", Icon: Cloud };
+  if (code <= 49) return { condition: "Foggy", Icon: Cloud };
+  if (code <= 55) return { condition: "Drizzle", Icon: CloudRain };
+  if (code <= 65) return { condition: "Rainy", Icon: CloudRain };
+  if (code <= 77) return { condition: "Snowy", Icon: CloudSnow };
+  if (code <= 82) return { condition: "Rain Showers", Icon: CloudRain };
+  if (code <= 86) return { condition: "Snow Showers", Icon: CloudSnow };
+  if (code <= 99) return { condition: "Thunderstorm", Icon: CloudLightning };
+  return { condition: "Unknown", Icon: Cloud };
+}
+
+interface DashboardWeather {
+  location: string;
+  temp: string;
+  humidity: string;
+  wind: string;
+  condition: string;
+  Icon: React.ElementType;
+}
 
 const soilData = [
   { label: "pH Level", value: "6.8", status: "optimal", icon: Droplets },
@@ -35,6 +57,93 @@ const recentAlerts = [
 ];
 
 const Dashboard = () => {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [weatherLoading, setWeatherLoading] = useState(true);
+  const [weatherData, setWeatherData] = useState<DashboardWeather>({
+    location: "Detecting location...",
+    temp: "--°C",
+    humidity: "--%",
+    wind: "-- km/h",
+    condition: "Loading...",
+    Icon: Cloud,
+  });
+
+  const fetchWeather = async () => {
+    setWeatherLoading(true);
+    if (!navigator.geolocation) {
+      setWeatherData((prev) => ({
+        ...prev,
+        location: "Location unavailable",
+        condition: "Geolocation not supported",
+      }));
+      setWeatherLoading(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        const { latitude, longitude } = coords;
+        try {
+          const geoRes = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`
+          );
+          const geoData = await geoRes.json();
+          const city =
+            geoData.address?.city ||
+            geoData.address?.town ||
+            geoData.address?.village ||
+            geoData.address?.county ||
+            "Your Location";
+
+          const weatherRes = await fetch(
+            `https://api.open-meteo.com/v1/forecast` +
+              `?latitude=${latitude}&longitude=${longitude}` +
+              `&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code` +
+              `&timezone=auto`
+          );
+          const weatherJson = await weatherRes.json();
+          const current = weatherJson.current;
+          const { condition, Icon } = wmoToCondition(current.weather_code);
+
+          setWeatherData({
+            location: city,
+            temp: `${Math.round(current.temperature_2m)}°C`,
+            humidity: `${current.relative_humidity_2m}%`,
+            wind: `${Math.round(current.wind_speed_10m)} km/h`,
+            condition,
+            Icon,
+          });
+        } catch {
+          setWeatherData((prev) => ({
+            ...prev,
+            location: "Weather unavailable",
+            condition: "Failed to load weather",
+          }));
+        } finally {
+          setWeatherLoading(false);
+        }
+      },
+      () => {
+        setWeatherData((prev) => ({
+          ...prev,
+          location: "Location permission denied",
+          condition: "Enable location to see live weather",
+        }));
+        setWeatherLoading(false);
+      }
+    );
+  };
+
+  useEffect(() => {
+    fetchWeather();
+  }, []);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await fetchWeather();
+    setIsRefreshing(false);
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -44,8 +153,8 @@ const Dashboard = () => {
             <h1 className="text-2xl md:text-3xl font-bold">Farm Dashboard</h1>
             <p className="text-muted-foreground">Monitor your farm's health and get real-time insights</p>
           </div>
-          <Button variant="outline" size="sm" className="w-fit">
-            <RefreshCw className="h-4 w-4 mr-2" />
+          <Button variant="outline" size="sm" className="w-fit" onClick={handleRefresh} disabled={isRefreshing}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
             Refresh Data
           </Button>
         </div>
@@ -95,12 +204,20 @@ const Dashboard = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
+              <p className="text-xs text-muted-foreground mb-4 flex items-center gap-1">
+                <MapPin className="h-3.5 w-3.5" />
+                {weatherData.location}
+              </p>
               <div className="flex items-center justify-between mb-6">
                 <div>
                   <p className="text-4xl font-bold">{weatherData.temp}</p>
                   <p className="text-muted-foreground">{weatherData.condition}</p>
                 </div>
-                <Sun className="h-16 w-16 text-accent" />
+                {weatherLoading ? (
+                  <Loader2 className="h-10 w-10 text-primary animate-spin" />
+                ) : (
+                  <weatherData.Icon className="h-16 w-16 text-accent" />
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex items-center gap-2 text-sm">

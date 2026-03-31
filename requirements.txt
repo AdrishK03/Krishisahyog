@@ -2,25 +2,27 @@
 fastapi==0.115.6
 pydantic[email]==2.12.5
 uvicorn[standard]==0.32.1
+python-multipart==0.0.18
 
 # Authentication
 python-jose[cryptography]==3.3.0
-passlib==1.7.4
-bcrypt==4.1.2   # ✅ pinned for passlib compatibility
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
 
 # Database
 sqlalchemy==2.0.36
 
-# ML & Image
-numpy==2.2.1
+# ML & Computer Vision
+numpy==1.26.4
+torch
+torchvision
+timm==1.0.11
+tensorflow-cpu==2.16.1
 scikit-learn==1.6.0
 Pillow==11.0.0
 
-# HTTP
-python-multipart==0.0.18
+# HTTP & LLM
 httpx==0.28.1
-
-# LLM
 openai==1.57.2
 google-generativeai
 

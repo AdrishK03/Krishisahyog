@@ -18,6 +18,7 @@ import Chatbot from "./pages/Chatbot";
 import Market from "./pages/Market";
 import Features from "./pages/Features";
 import Advisory from "./pages/Advisory";
+import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -57,6 +58,9 @@ const App = () => (
             } />
             <Route path="/dashboard/advisory" element={
               <ProtectedRoute><Advisory /></ProtectedRoute>
+            } />
+            <Route path="/dashboard/settings" element={
+              <ProtectedRoute><Settings /></ProtectedRoute>
             } />
             
             {/* Catch-all */}

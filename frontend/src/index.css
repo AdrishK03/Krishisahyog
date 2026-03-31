@@ -5,7 +5,28 @@
 /* KrishiSahyog - AgriTech Design System
    Earthy greens, warm browns, and soft yellows for a farmer-friendly interface
 */
+/* Target the iframe by ID and Class */
+#goog-gt-tt, 
+.goog-te-banner-frame, 
+.goog-te-banner-frame.skiptranslate, 
+[id=":0.container"] {
+    display: none !important;
+    visibility: hidden !important;
+}
 
+/* Force the body back to the top */
+body {
+    top: 0 !important;
+    position: static !important; /* Overrides Google's 'relative' positioning */
+}
+
+/* Hide the 'Powered by Google' attribution if needed */
+.goog-logo-link {
+    display: none !important;
+}
+.goog-te-gadget {
+    color: transparent !important;
+}
 @layer base {
   :root {
     /* Core Colors - Fresh Agricultural Greens */

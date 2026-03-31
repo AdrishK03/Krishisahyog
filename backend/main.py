@@ -82,6 +82,7 @@ def require_auth(authorization: str | None = Header(default=None, alias="Authori
 @app.post("/predict/plant-disease")
 def predict_plant_disease(
     file: UploadFile = File(...),
+    tta: bool = False,
     _user_id: str = Depends(require_auth),
 ):
     """Predict plant disease from uploaded image. Requires auth."""
@@ -89,21 +90,7 @@ def predict_plant_disease(
         raise HTTPException(status_code=400, detail="File must be an image")
     contents = file.file.read()
     from ml.plant_predictor import predict_plant_disease as predict
-    result = predict(contents, file.filename or "")
-    # Enrich with treatment/prevention for frontend compatibility
-    if result.get("model_used") == "dummy":
-        result["disease"] = result["prediction"]
-        result["severity"] = "medium"
-        result["treatment"] = [
-            "Upload a trained model to backend/models/plant_disease_model.pkl for real predictions.",
-        ]
-        result["prevention"] = ["Ensure model file exists and is valid."]
-    else:
-        result["disease"] = result["prediction"]
-        result["severity"] = "medium"
-        result["treatment"] = ["Follow recommended agricultural practices for the detected condition."]
-        result["prevention"] = ["Practice crop rotation and maintain plant health."]
-    return result
+    return predict(contents, file.filename or "", tta=tta)
 
 
 class SoilInput(BaseModel):

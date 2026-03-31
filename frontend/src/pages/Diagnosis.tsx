@@ -7,6 +7,8 @@ import { useToast } from "@/hooks/use-toast";
 import { predictionAPI } from "@/services/api";
 
 interface DiagnosisResult {
+  plant: string;
+  plantConfidence: number;
   disease: string;
   confidence: number;
   severity: "low" | "medium" | "high";
@@ -55,13 +57,24 @@ const Diagnosis = () => {
     setResult(null);
     try {
       const { data } = await predictionAPI.plantDisease(selectedFile);
+      const plantData = (data?.plant ?? {}) as {
+        name?: string;
+        confidence?: number;
+      };
+
+      const plantConfRaw = Number(plantData.confidence ?? 0);
+      // Backend returns [0..1] confidence; frontend expects percent for display.
+      const plantConfidence = plantConfRaw <= 1 ? plantConfRaw * 100 : plantConfRaw;
+
       setResult({
-        disease: data.disease ?? data.prediction,
-        confidence: data.confidence ?? 0,
+        plant: plantData.name ?? "Unknown",
+        disease: data.disease ?? data.prediction ?? "Unknown",
+        confidence: Number(data.confidence ?? 0),
         severity: (data.severity as "low" | "medium" | "high") ?? "medium",
-        treatment: data.treatment ?? [],
-        prevention: data.prevention ?? [],
+        treatment: Array.isArray(data.treatment) ? data.treatment : [],
+        prevention: Array.isArray(data.prevention) ? data.prevention : [],
         model_used: data.model_used,
+        plantConfidence: Number.isFinite(plantConfidence) ? plantConfidence : 0,
       });
       toast({
         title: "Analysis Complete",
@@ -201,6 +214,18 @@ const Diagnosis = () => {
                 </div>
               ) : (
                 <div className="space-y-6">
+                  {/* Plant Info */}
+                  <div className="flex items-start justify-between gap-4 p-4 rounded-xl bg-secondary/50">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Detected Plant</p>
+                      <p className="text-xl font-bold mt-1">{result.plant}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm text-muted-foreground">Plant Confidence</p>
+                      <p className="text-xl font-bold text-primary mt-1">{result.plantConfidence.toFixed(1)}%</p>
+                    </div>
+                  </div>
+
                   {/* Disease Info */}
                   <div className="flex items-start justify-between gap-4 p-4 rounded-xl bg-secondary/50">
                     <div>
@@ -236,7 +261,7 @@ const Diagnosis = () => {
                       Recommended Treatment
                     </h4>
                     <ul className="space-y-2">
-                      {result.treatment.map((item, index) => (
+                      {(result.treatment.length ? result.treatment : ["No specific treatment available."]).map((item, index) => (
                         <li key={index} className="flex items-start gap-2 text-sm">
                           <span className="h-1.5 w-1.5 rounded-full bg-success mt-2 shrink-0" />
                           {item}
@@ -252,7 +277,7 @@ const Diagnosis = () => {
                       Prevention Tips
                     </h4>
                     <ul className="space-y-2">
-                      {result.prevention.map((item, index) => (
+                      {(result.prevention.length ? result.prevention : ["Monitor crop condition and repeat analysis with clearer images if needed."]).map((item, index) => (
                         <li key={index} className="flex items-start gap-2 text-sm text-muted-foreground">
                           <span className="h-1.5 w-1.5 rounded-full bg-info mt-2 shrink-0" />
                           {item}

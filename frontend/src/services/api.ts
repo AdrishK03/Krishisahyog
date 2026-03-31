@@ -46,7 +46,7 @@ export const authAPI = {
 
 // ML Prediction API
 export const predictionAPI = {
-  plantDisease: (imageFile: File) => {
+  plantDisease: (imageFile: File, tta = false) => {
     const formData = new FormData();
     formData.append("file", imageFile);
     return api.post<{
@@ -57,7 +57,10 @@ export const predictionAPI = {
       severity: string;
       treatment: string[];
       prevention: string[];
+      plant?: { name?: string; confidence?: number; accepted?: boolean };
+      pipeline?: Record<string, unknown>;
     }>("/predict/plant-disease", formData, {
+      params: { tta },
       headers: { "Content-Type": "multipart/form-data" },
       timeout: 60000,
     });
