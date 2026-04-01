@@ -23,8 +23,20 @@ const languages = [
   { code: "ta", name: "Tamil", native: "தமிழ்" },
 ];
 
+const LANGUAGE_STORAGE_KEY = "krishisahyog_language";
+
+const getStoredLanguage = () => {
+  const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+  return languages.some((lang) => lang.code === saved) ? (saved as string) : "en";
+};
+
+const setTranslateCookie = (langCode: string) => {
+  document.cookie = `googtrans=/en/${langCode}; path=/`;
+  document.cookie = `googtrans=/en/${langCode}; path=/; domain=${window.location.hostname}`;
+};
+
 const GoogleTranslate = () => {
-  const [currentLang, setCurrentLang] = useState("en");
+  const [currentLang, setCurrentLang] = useState(getStoredLanguage);
   const [, setIsLoaded] = useState(false);
 
   useEffect(() => {
@@ -52,6 +64,16 @@ const GoogleTranslate = () => {
           "google_translate_element"
         );
         setIsLoaded(true);
+
+        const savedLanguage = getStoredLanguage();
+        if (savedLanguage !== "en") {
+          setTranslateCookie(savedLanguage);
+          const selectElement = document.querySelector(".goog-te-combo") as HTMLSelectElement | null;
+          if (selectElement) {
+            selectElement.value = savedLanguage;
+            selectElement.dispatchEvent(new Event("change"));
+          }
+        }
       };
 
       // Add script
@@ -86,20 +108,14 @@ const GoogleTranslate = () => {
 
   const changeLanguage = (langCode: string) => {
     setCurrentLang(langCode);
-    
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, langCode);
+    setTranslateCookie(langCode);
+
     // Trigger Google Translate language change
     const selectElement = document.querySelector(".goog-te-combo") as HTMLSelectElement;
     if (selectElement) {
       selectElement.value = langCode;
       selectElement.dispatchEvent(new Event("change"));
-      // React UIs can break when Google Translate mutates the DOM live.
-      // Reload keeps page and virtual DOM in sync after language switch.
-      window.setTimeout(() => window.location.reload(), 300);
-    } else {
-      // Fallback: Set cookie and reload
-      document.cookie = `googtrans=/en/${langCode}; path=/`;
-      document.cookie = `googtrans=/en/${langCode}; path=/; domain=${window.location.hostname}`;
-      window.location.reload();
     }
   };
 
