@@ -58,12 +58,12 @@ function AppSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
       <div className="flex h-16 items-center justify-between px-4 border-b border-sidebar-border">
-        <Link to="/" className="flex items-center gap-2">
+        <Link to="/" className="flex items-center gap-2 notranslate" translate="no">
           <div className="p-1.5 rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
             <Sprout className="h-5 w-5" />
           </div>
           {!isCollapsed && (
-            <span className="font-bold text-lg text-sidebar-foreground">
+            <span className="font-bold text-lg text-sidebar-foreground notranslate" translate="no">
               Krishi<span className="text-sidebar-primary">Sahyog</span>
             </span>
           )}

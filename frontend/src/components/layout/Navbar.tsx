@@ -24,11 +24,11 @@ const Navbar = () => {
       <div className="container mx-auto px-4">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <Link to="/" className="flex items-center gap-2 group">
+          <Link to="/" className="flex items-center gap-2 group notranslate" translate="no">
             <div className="p-2 rounded-lg bg-primary text-primary-foreground group-hover:shadow-glow transition-all duration-300">
               <Sprout className="h-5 w-5" />
             </div>
-            <span className="font-bold text-xl text-foreground">
+            <span className="font-bold text-xl text-foreground notranslate" translate="no">
               Krishi<span className="text-primary">Sahyog</span>
             </span>
           </Link>
