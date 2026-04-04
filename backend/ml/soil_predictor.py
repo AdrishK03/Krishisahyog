@@ -1,88 +1,78 @@
-"""
-Soil fertilizer recommendation module.
-Loads model from backend/models/soil_fertilizer_model.pkl or uses rule-based dummy logic.
-"""
+"""Fertilizer recommendation from soil sensor features + soil/crop type (joblib models)."""
+from __future__ import annotations
+
 from pathlib import Path
 
-MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "soil_fertilizer_model.pkl"
+import joblib
+import numpy as np
+from pydantic import BaseModel
 
-_model = None
+_MODEL_DIR = Path(__file__).resolve().parent / "model"
+
+model = None
+le_target = None
+le_crop = None
+le_soil = None
+_LOAD_ERROR: str | None = None
+
+try:
+    model = joblib.load(_MODEL_DIR / "fertilizer_model.pkl")
+    le_target = joblib.load(_MODEL_DIR / "target_encoder.pkl")
+    le_crop = joblib.load(_MODEL_DIR / "crop_encoder.pkl")
+    le_soil = joblib.load(_MODEL_DIR / "soil_encoder.pkl")
+except Exception as e:  # pragma: no cover - depends on deployed artifacts
+    _LOAD_ERROR = str(e)
 
 
-def _load_model():
-    global _model
-    if _model is not None:
-        return _model
-    if not MODEL_PATH.exists():
-        return None
+class InputData(BaseModel):
+    Temperature: float
+    Humidity: float
+    Moisture: float
+    Soil_Type: str
+    Crop_Type: str
+    Nitrogen: float
+    Potassium: float
+    Phosphorous: float
+
+
+def predict_soil_fertilizer(data: InputData) -> dict:
+    """
+    Returns {"status": "success", "fertilizer": str} or
+    {"status": "error", "message": str}.
+    """
+    if model is None or le_target is None or le_crop is None or le_soil is None:
+        return {
+            "status": "error",
+            "message": _LOAD_ERROR or "Fertilizer models are not loaded.",
+        }
     try:
-        with open(MODEL_PATH, "rb") as f:
-            import pickle
-            _model = pickle.load(f)
-        return _model
-    except Exception:
-        return None
+        soil_idx = le_soil.transform([data.Soil_Type])[0]
+        crop_idx = le_crop.transform([data.Crop_Type])[0]
 
+        n, p, k = data.Nitrogen, data.Phosphorous, data.Potassium
 
-def _dummy_recommend(n: float, p: float, k: float, ph: float, moisture: float, temp: float) -> tuple[str, str]:
-    """Rule-based fertilizer recommendation when model is unavailable."""
-    recommendations = []
-    if n < 50:
-        recommendations.append("Urea (N) - nitrogen deficient")
-    if p < 30:
-        recommendations.append("DAP or SSP - phosphorus deficient")
-    if k < 150:
-        recommendations.append("MOP (Potash) - potassium deficient")
-    if ph < 6.0:
-        recommendations.append("Lime - soil too acidic")
-    elif ph > 7.5:
-        recommendations.append("Gypsum - soil too alkaline")
-    if moisture < 30:
-        recommendations.append("Increase irrigation")
-    if temp > 35:
-        recommendations.append("Avoid fertilization during extreme heat")
+        features = np.array(
+            [
+                [
+                    data.Temperature,
+                    data.Humidity,
+                    data.Moisture,
+                    float(soil_idx),
+                    float(crop_idx),
+                    n,
+                    k,
+                    p,
+                    n + p + k,
+                    n / (p + 1.0),
+                    k / (p + 1.0),
+                    data.Temperature * data.Moisture,
+                ]
+            ]
+        )
 
-    if not recommendations:
-        rec = "NPK 20-20-20 (balanced) - soil parameters optimal"
-        expl = "Your soil parameters are within optimal ranges. A balanced fertilizer is recommended for maintenance."
-    else:
-        rec = "; ".join(recommendations)
-        expl = f"Based on your soil data: N={n}, P={p}, K={k}, pH={ph}, moisture={moisture}%, temp={temp}°C. " + rec
-    return rec, expl
+        pred = model.predict(features)
+        fertilizer = le_target.inverse_transform(pred)[0]
 
-
-def predict_soil_fertilizer(
-    nitrogen: float,
-    phosphorus: float,
-    potassium: float,
-    ph: float,
-    moisture: float,
-    temperature: float,
-) -> dict:
-    """
-    Recommend fertilizer based on soil parameters.
-    Returns: {recommended_fertilizer, explanation, model_used}
-    """
-    model = _load_model()
-    if model is not None:
-        try:
-            import numpy as np
-            X = np.array([[nitrogen, phosphorus, potassium, ph, moisture, temperature]])
-            if hasattr(model, "predict"):
-                pred = model.predict(X)[0]
-                rec = str(pred)
-                expl = f"Model recommendation based on N={nitrogen}, P={phosphorus}, K={potassium}, pH={ph}, moisture={moisture}%, temp={temperature}°C."
-                return {
-                    "recommended_fertilizer": rec,
-                    "explanation": expl,
-                    "model_used": "real",
-                }
-        except Exception:
-            pass
-
-    rec, expl = _dummy_recommend(nitrogen, phosphorus, potassium, ph, moisture, temperature)
-    return {
-        "recommended_fertilizer": rec,
-        "explanation": expl,
-        "model_used": "dummy",
-    }
+        return {"status": "success", "fertilizer": str(fertilizer)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

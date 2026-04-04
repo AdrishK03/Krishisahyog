@@ -60,6 +60,8 @@ app.add_middleware(
 
 app.include_router(auth_router)
 
+from ml.soil_predictor import InputData as SoilFertilizerInput, predict_soil_fertilizer as run_soil_fertilizer_predict
+
 
 # --- JWT dependency ---
 def get_current_user_id(authorization: str | None = None) -> str:
@@ -93,30 +95,26 @@ def predict_plant_disease(
     return predict(contents, file.filename or "", tta=tta)
 
 
-class SoilInput(BaseModel):
-    nitrogen: float
-    phosphorus: float
-    potassium: float
-    ph: float
-    moisture: float
-    temperature: float
-
-
 @app.post("/predict/soil-fertilizer")
-def predict_soil_fertilizer(
-    data: SoilInput,
+def predict_soil_fertilizer_endpoint(
+    data: SoilFertilizerInput,
     _user_id: str = Depends(require_auth),
 ):
-    """Recommend fertilizer based on soil parameters. Requires auth."""
-    from ml.soil_predictor import predict_soil_fertilizer as predict
-    return predict(
-        nitrogen=data.nitrogen,
-        phosphorus=data.phosphorus,
-        potassium=data.potassium,
-        ph=data.ph,
-        moisture=data.moisture,
-        temperature=data.temperature,
-    )
+    """Recommend fertilizer from IoT readings (NPK, temp, humidity, moisture) + soil/crop type. Requires auth."""
+    result = run_soil_fertilizer_predict(data)
+    if result.get("status") != "success":
+        raise HTTPException(
+            status_code=503,
+            detail=result.get("message", "Fertilizer prediction failed"),
+        )
+    return {
+        "recommended_fertilizer": result["fertilizer"],
+        "explanation": (
+            "Suggested by the fertilizer model using your live sensor readings "
+            "and selected soil and crop types."
+        ),
+        "model_used": "real",
+    }
 
 
 # --- Chatbot ---

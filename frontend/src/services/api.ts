@@ -67,12 +67,14 @@ export const predictionAPI = {
   },
 
   soilFertilizer: (data: {
-    nitrogen: number;
-    phosphorus: number;
-    potassium: number;
-    ph: number;
-    moisture: number;
-    temperature: number;
+    Temperature: number;
+    Humidity: number;
+    Moisture: number;
+    Soil_Type: string;
+    Crop_Type: string;
+    Nitrogen: number;
+    Phosphorous: number;
+    Potassium: number;
   }) =>
     api.post<{
       recommended_fertilizer: string;
