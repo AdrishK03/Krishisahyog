@@ -13,13 +13,14 @@ bcrypt==4.1.2
 sqlalchemy==2.0.36
 
 # ML & Computer Vision
-numpy==1.26.4
+numpy>=1.24.0
 torch
 torchvision
 timm==1.0.11
-tensorflow-cpu==2.16.1
+tensorflow-cpu>=2.20.0
 scikit-learn==1.6.0
 Pillow==11.0.0
+joblib
 
 # HTTP & LLM
 httpx==0.28.1

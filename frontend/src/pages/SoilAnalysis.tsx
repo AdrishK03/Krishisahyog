@@ -22,15 +22,17 @@ import {
 
 const SOIL_TYPES = ["Red", "Black", "Sandy", "Loamy", "Clayey"] as const;
 const CROP_TYPES = [
+  "Barley",
   "Cotton",
-  "Sugarcane",
-  "Wheat",
-  "Tobacco",
   "Ground Nuts",
-  "Rice",
-  "Corn",
-  "Tomato",
-  "Potato",
+  "Maize",
+  "Millets",
+  "Oil seeds",
+  "Paddy",
+  "Pulses",
+  "Sugarcane",
+  "Tobacco",
+  "Wheat",
 ] as const;
 
 type MetricRow = {
@@ -43,7 +45,6 @@ type MetricRow = {
 };
 
 const METRICS: MetricRow[] = [
-  { key: "ph", label: "pH Level", unit: "", optimal: { min: 6.0, max: 7.5 }, icon: Droplets, iconClass: "bg-primary/10 text-primary" },
   { key: "moisture", label: "Moisture", unit: "%", optimal: { min: 40, max: 60 }, icon: Droplets, iconClass: "bg-sky-500/10 text-sky-600" },
   { key: "humidity", label: "Humidity", unit: "%", optimal: { min: 40, max: 70 }, icon: Droplets, iconClass: "bg-cyan-500/10 text-cyan-600" },
   { key: "temperature", label: "Temperature", unit: "°C", optimal: { min: 20, max: 30 }, icon: Thermometer, iconClass: "bg-amber-500/10 text-amber-600" },

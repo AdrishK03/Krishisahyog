@@ -7,7 +7,7 @@ import joblib
 import numpy as np
 from pydantic import BaseModel
 
-_MODEL_DIR = Path(__file__).resolve().parent / "model"
+_MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
 
 model = None
 le_target = None
