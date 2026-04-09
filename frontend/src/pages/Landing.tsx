@@ -52,10 +52,8 @@ const features = [
 ];
 
 const stats = [
-  { value: "50,000+", label: "Farmers Helped" },
-  { value: "1M+", label: "Crop Diagnoses" },
   { value: "15+", label: "States Covered" },
-  { value: "98%", label: "Accuracy Rate" },
+  { value: "90%+", label: "Accuracy Rate" },
 ];
 
 const Landing = () => {
@@ -77,11 +75,6 @@ const Landing = () => {
 
         <div className="container mx-auto px-4 py-20 md:py-32 relative z-10">
           <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary-foreground/10 backdrop-blur-sm border border-primary-foreground/20 mb-6 animate-fade-in">
-              <CheckCircle className="h-4 w-4 text-accent" />
-              <span className="text-sm text-primary-foreground/90">Trusted by 50,000+ Indian Farmers</span>
-            </div>
-            
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-primary-foreground mb-6 animate-slide-up leading-tight">
               Smart Agricultural
               <span className="block text-accent">Advisory System</span>
