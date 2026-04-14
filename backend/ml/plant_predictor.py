@@ -171,7 +171,7 @@ def identify_plant(img_array: np.ndarray) -> dict:
     if plant_model is None:
         plant_model = load_plant_model()
     if plant_model is None:
-        raise RuntimeError("Plant model not loaded.")
+        raise RuntimeError("Keras model failed to load — check HF download and keras version")
 
     h, w = plant_input_size
     inp  = prepare_image(img_array, h, w)
