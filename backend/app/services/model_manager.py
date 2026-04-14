@@ -24,6 +24,8 @@ def _download(filename: str) -> str:
     )
 
 
+import keras  # standalone Keras 3, NOT tf.keras
+
 def _load_keras(cache_key: str, filename: str):
     if cache_key in _keras_cache:
         return _keras_cache[cache_key]
@@ -31,9 +33,9 @@ def _load_keras(cache_key: str, filename: str):
         if cache_key in _keras_cache:
             return _keras_cache[cache_key]
         path = _download(filename)
-        model = tf.keras.models.load_model(path)
+        model = keras.models.load_model(path)  # NOT tf.keras
         _keras_cache[cache_key] = model
-        print(f"[ModelManager] Loaded keras model: {filename}")
+        print(f"[ModelManager] Loaded: {filename}")
         return model
 
 
