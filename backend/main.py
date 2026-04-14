@@ -34,7 +34,7 @@ from auth.auth_routes import router as auth_router
 from auth.jwt_utils import decode_token
 
 # CORS origins - include both localhost and 127.0.0.1 for dev
-_cors_default = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"
+_cors_default = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,https://krishisahyog.vercel.app"
 origins = [x.strip() for x in os.getenv("CORS_ORIGINS", _cors_default).split(",") if x.strip()]
 
 app = FastAPI(
