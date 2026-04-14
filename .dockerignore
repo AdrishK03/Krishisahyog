@@ -2,33 +2,26 @@
 .git
 .gitignore
 
-# Backend (not needed for frontend image)
-backend
-
 # Python
-run.py
-*.py
-venv
-.venv
 __pycache__
 *.pyc
+*.pyo
+*.pyd
+venv
+.venv
 
-# Docker
-Dockerfile*
-docker-compose*.yml
-.dockerignore
-
-# Node (reinstalled in container)
+# Node
 node_modules
 dist
 
-# Env and secrets
+# Env
 .env
 .env.*
 *.local
 
-# IDE and misc
+# IDE
 .vscode
 .idea
+
+# Logs
 *.log
-README.md
