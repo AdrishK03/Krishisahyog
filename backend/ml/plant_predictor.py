@@ -9,6 +9,7 @@ Run:
   uvicorn main:app --port 8000
 """
 
+import os
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +19,11 @@ from PIL import Image
 import io, time, logging, base64
 from pathlib import Path
 from typing import Optional
+
+from app.services.model_manager import (
+    get_plant_primary_model,
+    get_plant_disease_model,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,9 +39,7 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
-BASE_DIR          = Path(__file__).resolve().parents[1]
-PLANT_MODEL_PATH  = BASE_DIR / "models" / "plant_model.keras"
-DISEASE_MODELS_DIR = BASE_DIR / "models"
+BASE_DIR = Path(__file__).resolve().parents[1]
 
 PLANT_THRESHOLD   = 0.55   # below → Unknown, stop pipeline
 DISEASE_THRESHOLD = 0.30   # below → disease uncertain
@@ -73,21 +77,18 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 # PLANT MODEL — Keras
 # ─────────────────────────────────────────────────────────────────────────────
-plant_model:      Optional[object] = None
-plant_input_size: tuple            = (IMG_SIZE, IMG_SIZE)
+plant_model: Optional[object] = None
+plant_input_size: tuple = (IMG_SIZE, IMG_SIZE)
 
 
-def load_plant_model(path):
+def load_plant_model():
     global plant_input_size
 
     if not TF_AVAILABLE:
         logger.error("Cannot load plant model — TensorFlow not installed.")
         return None
-    if not Path(path).exists():
-        logger.warning(f"Plant model not found: {path}")
-        return None
     try:
-        m = tf.keras.models.load_model(str(path), compile=False)
+        m = get_plant_primary_model()
 
         # Auto-detect input size from model
         shape = m.input_shape
@@ -106,7 +107,7 @@ def load_plant_model(path):
             )
         else:
             logger.info(
-                f"✅ Plant model loaded | input=({h},{w}) | classes={n_cls} | {path}"
+                f"✅ Plant model loaded | input=({h},{w}) | classes={n_cls}"
             )
         return m
 
@@ -115,52 +116,37 @@ def load_plant_model(path):
         return None
 
 
-plant_model = load_plant_model(PLANT_MODEL_PATH)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DISEASE MODELS — Keras, one per plant
-# ─────────────────────────────────────────────────────────────────────────────
-disease_models:      dict = {}
+disease_models: dict = {}
 disease_input_sizes: dict = {}
 
 
-def load_disease_models() -> None:
+def _get_disease_filename(plant: str) -> str:
+    raw = os.getenv("PLANT_MODEL_FILENAME", "")
+    parts = [p.strip() for p in raw.replace(",", "\\").split("\\") if p.strip()]
+    for name in parts:
+        if plant.lower() in name.lower():
+            return name
+    return f"{plant.lower()}.keras"
+
+
+def get_disease_model(plant: str):
     if not TF_AVAILABLE:
-        logger.warning("TensorFlow not available — disease models will not load.")
-        return
-
-    for plant in DISEASE_CLASSES:
-        model_file = Path(DISEASE_MODELS_DIR) / f"{plant.lower()}.keras"
-        if not model_file.exists():
-            logger.warning(f"Disease model not found: {model_file}")
-            continue
-        try:
-            m = tf.keras.models.load_model(str(model_file), compile=False)
-            disease_models[plant] = m
-
-            shape = m.input_shape
-            if isinstance(shape, list):
-                shape = shape[0]
-            h = int(shape[1]) if shape[1] else 224
-            w = int(shape[2]) if shape[2] else 224
-            disease_input_sizes[plant] = (h, w)
-
-            n_out = m.output_shape[-1]
-            n_cls = len(DISEASE_CLASSES[plant])
-            if n_out != n_cls:
-                logger.warning(
-                    f"⚠️  {plant} disease model output={n_out} but "
-                    f"DISEASE_CLASSES has {n_cls} — check disease_classes.py!"
-                )
-            else:
-                logger.info(
-                    f"✅ Disease model loaded: {plant} | input=({h},{w}) | classes={n_cls}"
-                )
-        except Exception as e:
-            logger.error(f"❌ Failed to load {plant} disease model: {e}", exc_info=True)
-
-
-load_disease_models()
+        return None
+    if plant in disease_models:
+        return disease_models[plant]
+    try:
+        model = get_plant_disease_model(plant)
+        disease_models[plant] = model
+        shape = model.input_shape
+        if isinstance(shape, list):
+            shape = shape[0]
+        h = int(shape[1]) if shape[1] else 224
+        w = int(shape[2]) if shape[2] else 224
+        disease_input_sizes[plant] = (h, w)
+        return model
+    except Exception as e:
+        logger.error(f"❌ Failed to load {plant} disease model: {e}", exc_info=True)
+        return None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # IMAGE PREPROCESSING
@@ -181,10 +167,11 @@ def prepare_image(img_array: np.ndarray, h: int, w: int) -> np.ndarray:
 # STEP 1 — PLANT IDENTIFICATION
 # ─────────────────────────────────────────────────────────────────────────────
 def identify_plant(img_array: np.ndarray) -> dict:
+    global plant_model
     if plant_model is None:
-        raise RuntimeError(
-            f"Plant model not loaded. Check PLANT_MODEL_PATH: {PLANT_MODEL_PATH}"
-        )
+        plant_model = load_plant_model()
+    if plant_model is None:
+        raise RuntimeError("Plant model not loaded.")
 
     h, w = plant_input_size
     inp  = prepare_image(img_array, h, w)
@@ -212,7 +199,8 @@ def identify_plant(img_array: np.ndarray) -> dict:
 # STEP 2 — DISEASE DETECTION
 # ─────────────────────────────────────────────────────────────────────────────
 def detect_disease(img_array: np.ndarray, plant: str) -> dict:
-    if plant not in disease_models:
+    model = get_disease_model(plant)
+    if model is None:
         return {
             "disease":    None,
             "confidence": None,
@@ -225,7 +213,7 @@ def detect_disease(img_array: np.ndarray, plant: str) -> dict:
     inp  = prepare_image(img_array, h, w)
 
     t0      = time.perf_counter()
-    preds   = disease_models[plant].predict(inp, verbose=0)[0]
+    preds = model.predict(inp, verbose=0)[0]
     elapsed = (time.perf_counter() - t0) * 1000
 
     idx      = int(np.argmax(preds))
@@ -359,8 +347,6 @@ def predict_plant_disease(image_bytes: bytes, filename: str = "", tta: bool = Fa
     Wrapper function for compatibility with main.py.
     Accepts raw image bytes and returns prediction results.
     """
-    if plant_model is None:
-        raise RuntimeError("Plant model not loaded.")
     if not image_bytes:
         raise RuntimeError("Empty image payload.")
 
@@ -439,7 +425,6 @@ async def health():
         "status":                "ok",
         "tensorflow":            TF_AVAILABLE,
         "plant_model_loaded":    plant_model is not None,
-        "plant_model_path":      str(PLANT_MODEL_PATH),
         "plant_input_size":      plant_input_size,
         "plant_classes":         PLANT_CLASSES,
         "supported_plants":      list(SUPPORTED_PLANTS),
@@ -461,12 +446,6 @@ async def predict_endpoint(file: UploadFile = File(...)):
     raw = await file.read()
     if len(raw) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Max 10 MB.")
-    if plant_model is None:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Plant model not loaded. Check PLANT_MODEL_PATH: {PLANT_MODEL_PATH}"
-        )
-
     try:
         img       = Image.open(io.BytesIO(raw)).convert("RGB")
         img_array = np.array(img)
@@ -503,12 +482,12 @@ async def get_classes():
 async def reload_models():
     """Hot-reload all models without restarting the server."""
     global plant_model, plant_input_size
-    plant_model = load_plant_model(PLANT_MODEL_PATH)
+    plant_model = None
+    plant_input_size = (IMG_SIZE, IMG_SIZE)
     disease_models.clear()
     disease_input_sizes.clear()
-    load_disease_models()
     return {
-        "plant_model":         plant_model is not None,
+        "plant_model":         False,
         "plant_input_size":    plant_input_size,
         "disease_models":      list(disease_models.keys()),
         "disease_input_sizes": disease_input_sizes,

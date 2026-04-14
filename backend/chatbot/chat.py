@@ -43,9 +43,11 @@ def _try_sambanova(message: str, history: List[Dict]) -> Optional[str]:
         return None
 
     try:
-        from sambanova import SambaNova
-
-        client = SambaNova(api_key=api_key, base_url="https://api.sambanova.ai/v1")
+        from openai import OpenAI
+        client = OpenAI(
+            api_key=os.getenv("SAMBANOVA_API_KEY"),
+            base_url=os.getenv("SAMBANOVA_BASE_URL", "https://api.sambanova.ai/v1"),
+        )
 
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         for h in history:
@@ -55,7 +57,7 @@ def _try_sambanova(message: str, history: List[Dict]) -> Optional[str]:
 
         def call():
             res = client.chat.completions.create(
-                model="DeepSeek-R1-0528",
+                model=os.getenv("SAMBANOVA_MODEL", "Meta-Llama-3.1-8B-Instruct"),
                 messages=messages,
                 temperature=0.3,
                 top_p=0.9

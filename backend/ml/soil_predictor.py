@@ -1,27 +1,15 @@
 """Fertilizer recommendation from soil sensor features + soil/crop type (joblib models)."""
 from __future__ import annotations
 
-from pathlib import Path
+import os
 
-import joblib
 import numpy as np
 from pydantic import BaseModel
-
-_MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
-
-model = None
-le_target = None
-le_crop = None
-le_soil = None
-_LOAD_ERROR: str | None = None
-
-try:
-    model = joblib.load(_MODEL_DIR / "fertilizer_model.pkl")
-    le_target = joblib.load(_MODEL_DIR / "target_encoder.pkl")
-    le_crop = joblib.load(_MODEL_DIR / "crop_encoder.pkl")
-    le_soil = joblib.load(_MODEL_DIR / "soil_encoder.pkl")
-except Exception as e:  # pragma: no cover - depends on deployed artifacts
-    _LOAD_ERROR = str(e)
+from app.services.model_manager import (
+    get_soil_model,
+    get_soil_encoder,
+    get_soil_config,
+)
 
 
 class InputData(BaseModel):
@@ -40,14 +28,22 @@ def predict_soil_fertilizer(data: InputData) -> dict:
     Returns {"status": "success", "fertilizer": str} or
     {"status": "error", "message": str}.
     """
-    if model is None or le_target is None or le_crop is None or le_soil is None:
+    try:
+        model = get_soil_model()
+        soil_enc = get_soil_encoder("soil_encoder")
+        crop_enc = get_soil_encoder("crop_encoder")
+        target_enc = get_soil_encoder("target_encoder")
+        config = get_soil_config("config")
+        metadata = get_soil_config("metadata")
+    except Exception as e:
         return {
             "status": "error",
-            "message": _LOAD_ERROR or "Fertilizer models are not loaded.",
+            "message": f"Model loading failed: {str(e)}",
         }
+
     try:
-        soil_idx = le_soil.transform([data.Soil_Type])[0]
-        crop_idx = le_crop.transform([data.Crop_Type])[0]
+        soil_idx = soil_enc.transform([data.Soil_Type])[0]
+        crop_idx = crop_enc.transform([data.Crop_Type])[0]
 
         n, p, k = data.Nitrogen, data.Phosphorous, data.Potassium
 
@@ -71,7 +67,7 @@ def predict_soil_fertilizer(data: InputData) -> dict:
         )
 
         pred = model.predict(features)
-        fertilizer = le_target.inverse_transform(pred)[0]
+        fertilizer = target_enc.inverse_transform(pred)[0]
 
         return {"status": "success", "fertilizer": str(fertilizer)}
     except Exception as e:

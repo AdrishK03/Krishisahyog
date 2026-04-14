@@ -17,16 +17,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: object):
-    """Startup: create DB tables. Shutdown: cleanup."""
-    try:
-        from database.db import engine, Base
-        from database import models  # noqa: F401 - register models with Base
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables created/verified")
-    except Exception as e:
-        logger.error("Database initialization failed: %s", e)
-        raise
+    """Startup/shutdown lifecycle hooks."""
     yield
+    from database.db import close_mongo_client
+    close_mongo_client()
     logger.info("Shutting down backend")
 
 
@@ -145,13 +139,5 @@ def chat_endpoint(
 # --- Health ---
 
 @app.get("/health")
-def health():
-    """Health check — also shows which AI providers are configured."""
-    configured = []
-    if os.getenv("ANTHROPIC_API_KEY"):
-        configured.append("claude")
-    if os.getenv("GEMINI_API_KEY"):
-        configured.append("gemini")
-    if os.getenv("OPENAI_API_KEY"):
-        configured.append("openai")
-    return {"status": "ok", "ai_providers": configured}
+async def health():
+    return {"status": "ok"}
