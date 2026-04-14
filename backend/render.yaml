@@ -2,8 +2,9 @@ services:
   - type: web
     name: krishisahyog-backend
     env: python
+    pythonVersion: "3.11.9"
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     envVars:
       - key: PYTHON_VERSION
-        value: "3.10.14"
+        value: "3.11.9"
