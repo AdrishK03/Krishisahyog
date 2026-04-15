@@ -19,10 +19,9 @@ An intelligent agricultural assistant combining machine learning models, real-ti
 
 ### Backend
 - **Framework:** FastAPI (Python 3.10+)
-- **Database:** SQLite (configurable)
+- **Database:** MongoDB
 - **Authentication:** JWT (PyJWT)
-- **ML Models:** TensorFlow/Keras, PyTorch, ONNX
-- **API Documentation:** Auto-generated Swagger UI
+- **ML Models:** TensorFlow/Keras
 - **Containerization:** Docker
 
 ### Frontend
