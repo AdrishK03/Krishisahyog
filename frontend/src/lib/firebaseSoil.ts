@@ -2,9 +2,15 @@ import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getDatabase, ref, onValue, type Unsubscribe } from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string | undefined,
-  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL as string | undefined,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined,
+  apiKey:
+    (import.meta.env.VITE_FIREBASE_API_KEY as string | undefined) ??
+    (import.meta.env.FIREBASE_API_KEY as string | undefined),
+  databaseURL:
+    (import.meta.env.VITE_FIREBASE_DATABASE_URL as string | undefined) ??
+    (import.meta.env.FIREBASE_DATABASE_URL as string | undefined),
+  projectId:
+    (import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined) ??
+    (import.meta.env.FIREBASE_PROJECT_ID as string | undefined),
 };
 
 export function isFirebaseSoilConfigured(): boolean {
