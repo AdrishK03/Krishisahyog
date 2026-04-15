@@ -15,6 +15,7 @@ huggingface_hub==0.23.4
 Pillow==10.4.0
 numpy==1.26.4
 firebase-admin==6.5.0
+keras==3.11.0
 python-dotenv==1.0.1
 email-validator==2.2.0
 joblib==1.4.2

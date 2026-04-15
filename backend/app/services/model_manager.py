@@ -54,9 +54,20 @@ def _load_keras(cache_key: str, filename: str):
         if cache_key in _keras_cache:
             return _keras_cache[cache_key]
         path = _download(filename)
-        model = keras.models.load_model(path)  # NOT tf.keras
+        try:
+            model = keras.models.load_model(path)  # NOT tf.keras
+            print(f"[ModelManager] Loaded: {filename} using standalone keras")
+        except Exception as first_exc:
+            try:
+                import tensorflow as tf
+                model = tf.keras.models.load_model(path)
+                print(f"[ModelManager] Loaded: {filename} using tf.keras fallback")
+            except Exception as second_exc:
+                raise RuntimeError(
+                    f"Failed to load model '{filename}' with keras and tf.keras. "
+                    f"standalone error: {first_exc}; tf.keras error: {second_exc}"
+                ) from second_exc
         _keras_cache[cache_key] = model
-        print(f"[ModelManager] Loaded: {filename}")
         return model
 
 
