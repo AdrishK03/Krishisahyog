@@ -1,46 +1,46 @@
 """
 KrishiSahyog FastAPI backend.
-Run: uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+Optimized for Render Free Tier using Hugging Face Inference API.
 """
-from dotenv import load_dotenv
-# Load .env before any other imports that use env vars
-load_dotenv()
 import os
 import logging
+import io
+from pathlib import Path
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+load_dotenv()
 
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: object):
-    """Startup/shutdown lifecycle hooks."""
-    yield
-    from database.db import close_mongo_client
-    close_mongo_client()
-    logger.info("Shutting down backend")
-
-
-# Build app after env is loaded
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from database.db import get_db
+# Internal Imports
+from database.db import close_mongo_client
 from auth.auth_routes import router as auth_router
 from auth.jwt_utils import decode_token
+from ml.soil_predictor import InputData as SoilFertilizerInput, predict_soil_fertilizer as run_soil_fertilizer_predict
+from ml.plant_predictor import predict_plant_disease as predict_plant_disease_logic
 
-# CORS origins - include both localhost and 127.0.0.1 for dev
-_cors_default = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,https://krishisahyog.vercel.app"
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown lifecycle hooks."""
+    logger.info("Starting up KrishiSahyog Backend...")
+    yield
+    close_mongo_client()
+    logger.info("Shutting down backend")
+
+# --- CORS SETUP ---
+_cors_default = "http://localhost:5173,http://localhost:5174,https://krishisahyog.vercel.app"
 origins = [x.strip() for x in os.getenv("CORS_ORIGINS", _cors_default).split(",") if x.strip()]
 
 app = FastAPI(
     title="KrishiSahyog API",
-    description="ML-powered agriculture advisory backend",
-    version="1.0.0",
+    description="ML-powered agriculture advisory backend (Cloud-Inference Mode)",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -54,12 +54,8 @@ app.add_middleware(
 
 app.include_router(auth_router)
 
-from ml.soil_predictor import InputData as SoilFertilizerInput, predict_soil_fertilizer as run_soil_fertilizer_predict
-
-
-# --- JWT dependency ---
-def get_current_user_id(authorization: str | None = None) -> str:
-    """Extract and validate JWT from Authorization header."""
+# --- JWT DEPENDENCY ---
+def get_current_user_id(authorization: str | None = Header(default=None, alias="Authorization")) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
     token = authorization.replace("Bearer ", "").strip()
@@ -68,33 +64,36 @@ def get_current_user_id(authorization: str | None = None) -> str:
         raise HTTPException(status_code=401, detail="Invalid token")
     return payload["sub"]
 
-
-def require_auth(authorization: str | None = Header(default=None, alias="Authorization")):
-    return get_current_user_id(authorization)
-
-
-# --- ML Routes ---
+# --- ML ROUTES ---
 
 @app.post("/predict/plant-disease")
-def predict_plant_disease(
+async def plant_disease_endpoint(
     file: UploadFile = File(...),
     tta: bool = False,
-    _user_id: str = Depends(require_auth),
+    _user_id: str = Depends(get_current_user_id),
 ):
-    """Predict plant disease from uploaded image. Requires auth."""
+    """Predict plant disease via Hugging Face Inference API."""
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
-    contents = file.file.read()
-    from ml.plant_predictor import predict_plant_disease as predict
-    return predict(contents, file.filename or "", tta=tta)
-
+    
+    try:
+        contents = await file.read()
+        # Offloads the heavy lifting to plant_predictor which calls HF API
+        result = predict_plant_disease_logic(contents, file.filename or "", tta=tta)
+        return result
+    except RuntimeError as e:
+        # Handles 503 errors (model loading) from Hugging Face
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error(f"Prediction Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal prediction error")
 
 @app.post("/predict/soil-fertilizer")
-def predict_soil_fertilizer_endpoint(
+async def soil_fertilizer_endpoint(
     data: SoilFertilizerInput,
-    _user_id: str = Depends(require_auth),
+    _user_id: str = Depends(get_current_user_id),
 ):
-    """Recommend fertilizer from IoT readings (NPK, temp, humidity, moisture) + soil/crop type. Requires auth."""
+    """Recommend fertilizer using local Scikit-Learn model (downloaded from HF)."""
     result = run_soil_fertilizer_predict(data)
     if result.get("status") != "success":
         raise HTTPException(
@@ -103,41 +102,30 @@ def predict_soil_fertilizer_endpoint(
         )
     return {
         "recommended_fertilizer": result["fertilizer"],
-        "explanation": (
-            "Suggested by the fertilizer model using your live sensor readings "
-            "and selected soil and crop types."
-        ),
-        "model_used": "real",
+        "explanation": "Suggested by the fertilizer model based on your sensor readings.",
+        "model_source": "HuggingFace-Assets"
     }
 
-
-# --- Chatbot ---
+# --- CHATBOT ---
 
 class ChatRequest(BaseModel):
     message: str
     history: list[dict] | None = None
 
-
 @app.post("/chat")
-def chat_endpoint(
+async def chat_endpoint(
     req: ChatRequest,
-    _user_id: str = Depends(require_auth),
+    _user_id: str = Depends(get_current_user_id),
 ):
-    """Agriculture chatbot with Claude → Gemini → OpenAI fallback. Requires auth."""
     from chatbot.chat import chat
     result = chat(req.message, req.history)
     if result.get("error"):
-        # 503 = all providers failed, 429 = quota hit but at least one worked partially
-        status = 503
-        raise HTTPException(status_code=status, detail=result["error"])
+        raise HTTPException(status_code=503, detail=result["error"])
     return {
         "response": result["response"],
         "provider": result.get("provider", "unknown"),
     }
 
-
-# --- Health ---
-
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "inference_mode": "remote_api"}
