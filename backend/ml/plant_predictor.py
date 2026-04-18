@@ -2,7 +2,7 @@ import io
 import os
 import numpy as np
 from PIL import Image
-from .model_manager import call_hf_inference_api
+from app.services.model_manager import call_hf_inference_api
 from .disease_classes import DISEASE_CLASSES, DISEASE_DISPLAY
 from .treatments import get_treatment
 
