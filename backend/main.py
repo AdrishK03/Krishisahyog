@@ -134,3 +134,10 @@ async def chat_endpoint(
 @app.get("/health")
 async def health():
     return {"status": "ok", "inference_mode": "remote_api"}
+#  — s temporary debug route
+@app.post("/debug/plant")
+async def debug_plant(file: UploadFile = File(...)):
+    contents = await file.read()
+    from app.services.model_manager import call_hf_inference_api
+    raw = call_hf_inference_api(contents, "primary")
+    return {"raw_response": raw}
