@@ -63,13 +63,15 @@ const Diagnosis = () => {
       };
 
       const plantConfRaw = Number(plantData.confidence ?? 0);
-      // Backend returns [0..1] confidence; frontend expects percent for display.
       const plantConfidence = plantConfRaw <= 1 ? plantConfRaw * 100 : plantConfRaw;
+
+      const diseaseConfidenceRaw = Number(data.confidence ?? 0);
+      const diseaseConfidence = diseaseConfidenceRaw <= 1 ? diseaseConfidenceRaw * 100 : diseaseConfidenceRaw;
 
       setResult({
         plant: plantData.name ?? "Unknown",
-        disease: data.disease ?? data.prediction ?? "Unknown",
-        confidence: Number(data.confidence ?? 0),
+        disease: String(data.disease ?? data.prediction ?? "Unknown"),
+        confidence: Number.isFinite(diseaseConfidence) ? diseaseConfidence : 0,
         severity: (data.severity as "low" | "medium" | "high") ?? "medium",
         treatment: Array.isArray(data.treatment) ? data.treatment : [],
         prevention: Array.isArray(data.prevention) ? data.prevention : [],

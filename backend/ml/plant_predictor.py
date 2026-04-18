@@ -6,6 +6,20 @@ from app.services.model_manager import call_hf_inference_api
 from .disease_classes import DISEASE_CLASSES, DISEASE_DISPLAY
 from .treatments import get_treatment
 
+def _extract_top_prediction(preds):
+    if isinstance(preds, dict):
+        if "error" in preds:
+            raise RuntimeError(preds.get("error", "Hugging Face API returned an error"))
+        return preds
+    if isinstance(preds, list) and len(preds) > 0:
+        return preds[0]
+    raise RuntimeError("Unexpected Hugging Face inference response format")
+
+
+def _display_label(raw_label: str) -> str:
+    return DISEASE_DISPLAY.get(raw_label, raw_label)
+
+
 def predict_plant_disease(image_bytes: bytes, filename: str = "", tta: bool = False) -> dict:
     """
     Two-step API Pipeline:
@@ -14,49 +28,37 @@ def predict_plant_disease(image_bytes: bytes, filename: str = "", tta: bool = Fa
     """
     try:
         # STEP 1: Identify Plant
-        # API returns: [{"label": "Tomato", "score": 0.98}, ...]
         plant_preds = call_hf_inference_api(image_bytes, "primary")
-        
-        if isinstance(plant_preds, dict):
-            if "error" in plant_preds:
-                raise RuntimeError(plant_preds.get("error", "Plant ID API failed"))
-            top_plant = plant_preds
-        elif isinstance(plant_preds, list) and len(plant_preds) > 0:
-            top_plant = plant_preds[0]
-        else:
-            raise RuntimeError("Unexpected Hugging Face plant prediction format")
+        top_plant = _extract_top_prediction(plant_preds)
 
-        plant_name = str(top_plant.get('label', 'Unknown'))
+        plant_name = str(top_plant.get('label', 'Unknown')).strip()
         plant_conf = float(top_plant.get('score', 0.0))
 
         # STEP 2: Identify Disease
         disease_name = "Healthy / Unknown"
         disease_conf = 0.0
+        severity = "medium"
         treatment_info = None
-        
+
         # Only proceed if we are confident about the plant type
         if plant_conf > 0.40 and plant_name.lower() != "unknown":
             disease_preds = call_hf_inference_api(image_bytes, plant_name.lower())
-            
-            if isinstance(disease_preds, dict):
-                if "error" in disease_preds:
-                    raise RuntimeError(disease_preds.get("error", "Disease API failed"))
-                top_disease = disease_preds
-            elif isinstance(disease_preds, list) and len(disease_preds) > 0:
-                top_disease = disease_preds[0]
-            else:
-                top_disease = None
+            top_disease = _extract_top_prediction(disease_preds)
 
-            if top_disease:
-                disease_name = str(top_disease.get('label', 'Healthy / Unknown'))
-                disease_conf = float(top_disease.get('score', 0.0))
-                
-                # STEP 3: Get Treatment from your treatments.py
-                treatment_info = get_treatment(plant_name, disease_name)
+            disease_name = str(top_disease.get('label', disease_name)).strip()
+            disease_conf = float(top_disease.get('score', 0.0))
+            disease_name = _display_label(disease_name)
+
+            treatment_info = get_treatment(plant_name, disease_name)
+            if treatment_info and treatment_info.get("severity"):
+                severity = treatment_info.get("severity")
 
         return {
+            "status": "success",
             "prediction": disease_name,
+            "disease": disease_name,
             "confidence": round(disease_conf * 100, 2),
+            "severity": severity,
             "model_used": "HF_Inference_API",
             "plant": {
                 "name": plant_name,
@@ -67,4 +69,4 @@ def predict_plant_disease(image_bytes: bytes, filename: str = "", tta: bool = Fa
         }
 
     except Exception as e:
-        return {"error": str(e), "status": "failed"}
+        return {"error": str(e), "status": "failed", "prediction": "Unknown", "confidence": 0, "disease": "Unknown", "severity": "medium", "model_used": "HF_Inference_API"}
