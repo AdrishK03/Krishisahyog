@@ -96,6 +96,7 @@ async def soil_fertilizer_endpoint(
     """Recommend fertilizer using local Scikit-Learn model (downloaded from HF)."""
     result = run_soil_fertilizer_predict(data)
     if result.get("status") != "success":
+        logger.error("Soil fertilizer prediction failed: %s", result.get("message"))
         raise HTTPException(
             status_code=503,
             detail=result.get("message", "Fertilizer prediction failed"),
@@ -105,6 +106,10 @@ async def soil_fertilizer_endpoint(
         "explanation": "Suggested by the fertilizer model based on your sensor readings.",
         "model_source": "HuggingFace-Assets"
     }
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "KrishiSahyog API backend is ready."}
 
 # --- CHATBOT ---
 

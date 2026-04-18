@@ -17,12 +17,17 @@ def predict_plant_disease(image_bytes: bytes, filename: str = "", tta: bool = Fa
         # API returns: [{"label": "Tomato", "score": 0.98}, ...]
         plant_preds = call_hf_inference_api(image_bytes, "primary")
         
-        if not plant_preds or "error" in plant_preds:
-            raise RuntimeError(plant_preds.get("error", "Plant ID API failed"))
+        if isinstance(plant_preds, dict):
+            if "error" in plant_preds:
+                raise RuntimeError(plant_preds.get("error", "Plant ID API failed"))
+            top_plant = plant_preds
+        elif isinstance(plant_preds, list) and len(plant_preds) > 0:
+            top_plant = plant_preds[0]
+        else:
+            raise RuntimeError("Unexpected Hugging Face plant prediction format")
 
-        top_plant = plant_preds
-        plant_name = top_plant['label']  # e.g., "Tomato"
-        plant_conf = top_plant['score']
+        plant_name = str(top_plant.get('label', 'Unknown'))
+        plant_conf = float(top_plant.get('score', 0.0))
 
         # STEP 2: Identify Disease
         disease_name = "Healthy / Unknown"
@@ -33,10 +38,18 @@ def predict_plant_disease(image_bytes: bytes, filename: str = "", tta: bool = Fa
         if plant_conf > 0.40 and plant_name.lower() != "unknown":
             disease_preds = call_hf_inference_api(image_bytes, plant_name.lower())
             
-            if disease_preds and not isinstance(disease_preds, dict):
+            if isinstance(disease_preds, dict):
+                if "error" in disease_preds:
+                    raise RuntimeError(disease_preds.get("error", "Disease API failed"))
                 top_disease = disease_preds
-                disease_name = top_disease['label']
-                disease_conf = top_disease['score']
+            elif isinstance(disease_preds, list) and len(disease_preds) > 0:
+                top_disease = disease_preds[0]
+            else:
+                top_disease = None
+
+            if top_disease:
+                disease_name = str(top_disease.get('label', 'Healthy / Unknown'))
+                disease_conf = float(top_disease.get('score', 0.0))
                 
                 # STEP 3: Get Treatment from your treatments.py
                 treatment_info = get_treatment(plant_name, disease_name)

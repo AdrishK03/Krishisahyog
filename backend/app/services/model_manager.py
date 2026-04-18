@@ -29,7 +29,11 @@ def call_hf_inference_api(image_bytes: bytes, model_key: str):
         raise RuntimeError(f"Endpoint for {model_key} not configured in Env Vars.")
         
     api_url = f"https://api-inference.huggingface.co/models/{repo_id}"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    headers = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "application/octet-stream",
+        "Accept": "application/json",
+    }
     
     # We use a timeout because the Free API can sometimes hang
     response = requests.post(api_url, headers=headers, data=image_bytes, timeout=120)
