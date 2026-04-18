@@ -7,13 +7,15 @@ from .disease_classes import DISEASE_CLASSES, DISEASE_DISPLAY
 from .treatments import get_treatment
 
 def _extract_top_prediction(preds):
+    """HF Inference API returns a LIST of {label, score} dicts, sorted by score descending."""
+    if isinstance(preds, list) and len(preds) > 0:
+        # Return the highest-confidence prediction (first item)
+        return preds[0]
     if isinstance(preds, dict):
         if "error" in preds:
             raise RuntimeError(preds.get("error", "HF API Error"))
         return preds
-    if isinstance(preds, list) and len(preds) > 0:
-        return preds
-    raise RuntimeError("Unexpected HF response format")
+    raise RuntimeError(f"Unexpected HF response format: {type(preds)}: {preds}")
 
 def predict_plant_disease(image_bytes: bytes, filename: str = "", tta: bool = False) -> dict:
     try:
